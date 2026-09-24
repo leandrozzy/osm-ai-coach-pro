@@ -1901,5 +1901,95 @@ async function generateStrong433(n){
  try{const t=await geminiJson([{text:prompt}],{temperature:.1,maxOutputTokens:2200});s.tactic=validateTacticV58({...t,formation:/^4-3-3/.test(t.formation||'')?t.formation:dominantBaseV58(s).formation},s,'4-3-3 Forte IA + v5.8');s.tacticFreshAt=nowIso();s.tacticNeedsRefresh=false;attachTacticToUpcomingSchedule(s);saveState();closeModal();tacticModal(n)}catch(e){s.tactic=validateTacticV58(dominantBaseV58(s),s,'4-3-3 Forte local v5.8');attachTacticToUpcomingSchedule(s);saveState();closeModal();tacticModal(n)}
 }
 
-Object.assign(window,{applyCalendarAnchorV54,showView,setSelectedSlot,prepareReanalysis,configureSlot,saveSlotConfigV5,openCalendarForSlot,finishCompetition,confirmFinish,slotDetailModal,generateTacticForSlot,tacticModal,manualTacticModal,saveManualTactic,strong433Modal,generateStrong433,resultModal,saveResultV52,runSetupStep,scheduleModal,saveSchedule,downloadIcs,openMarketSnapshot,aiStrategyReview,strategyModal,renderInfo,updateEventIntel,rosterTransactionModal,saveRosterTransaction,saveVideoResultPosition,saveApiKey,clearApiKey,closeModal});
+
+// ===== v5.9: atualizar tática reutiliza dados salvos; vídeo novo é opcional =====
+function opponentReadAtV59(s){
+ return s?.lastAnalysisByMode?.tactic || s?.tacticFreshAt || s?.lastAnalysisAt || null;
+}
+function opponentReadTextV59(s){
+ const at=opponentReadAtV59(s);
+ return at?`Última leitura do adversário: ${fmtDateTime(at)}`:'Ainda não há leitura completa do adversário';
+}
+async function refreshTacticFromSavedDataV59(n){
+ const s=state.slots[n-1];
+ if(!s||s.status!=='active')return;
+ const hasOpponent=!!(s.opponent?.teamName && s.opponent?.overall!=null && s.opponent?.formation);
+ if(!hasOpponent){
+   toast('Ainda faltam dados do adversário. Envie o vídeo primeiro.');
+   return openTacticVideoRefreshV59(n);
+ }
+ toast(`Recalculando tática do Slot ${n} com os dados já salvos…`);
+ await generateTacticForSlot(n,false);
+ s.tacticFreshAt=nowIso();
+ s.tacticNeedsRefresh=false;
+ saveState();
+ renderToday();
+}
+function openTacticVideoRefreshV59(n){
+ setSelectedSlot(n);
+ analysisMode='tactic';
+ document.querySelectorAll('[data-analysis-mode]').forEach(x=>x.classList.toggle('active',x.dataset.analysisMode==='tactic'));
+ renderAnalysisMode();
+ showView('analyze');
+ if(els.slotTarget)els.slotTarget.value=String(n);
+ toast('Envie um novo vídeo somente se o adversário mudou ou se quiser confirmar os dados.');
+}
+function prepareReanalysis(n){
+ const s=state.slots[n-1];
+ if(!s?.tactic || !s?.opponent?.teamName){
+   return openTacticVideoRefreshV59(n);
+ }
+ return refreshTacticFromSavedDataV59(n);
+}
+function persistentTacticHtml(s){
+ if(!s||s.status!=='active')return '';
+ const late=overdueSchedule(s);
+ if(late){
+   const i=scheduleIndexOf(s,late);
+   return `<div class="card tactic-persistent overdue"><div class="tactic-head"><div><span class="eyebrow">JOGO ENCERRADO / HORÁRIO ULTRAPASSADO</span><h3>${esc(s.teamName)} × ${esc(late.opponent||s.opponent.teamName)}</h3><p class="danger-text small">${esc(fmtDateTime(late.dateTime))} · registre o resultado para avançar o calendário.</p></div></div><div class="actions"><button class="btn danger" onclick="resultModal(${s.slotNumber},${i})">Registrar resultado</button></div></div>`;
+ }
+ const near=shouldRefreshNearMatch(s);
+ if(!s.tactic){
+   return `<div class="card tactic-persistent"><div class="tactic-head"><div><span class="eyebrow">TÁTICA · SLOT ${s.slotNumber}</span><h3>Sem tática para este jogo</h3><p class="muted small">${esc(opponentReadTextV59(s))}</p></div></div><div class="actions"><button class="btn" onclick="openTacticVideoRefreshV59(${s.slotNumber})">Analisar adversário por vídeo</button><button class="btn secondary" onclick="strong433Modal(${s.slotNumber})">🔥 4-3-3 Forte</button></div></div>`;
+ }
+ return `<div class="card tactic-persistent ${near?'needs-refresh':''}">
+   <div class="tactic-head"><div><span class="eyebrow">TÁTICA ATUAL · SLOT ${s.slotNumber}</span><h3>${esc(s.teamName)} × ${esc(s.opponent.teamName)}</h3>
+   <p class="small ${near?'warn-text':'muted'}">${near?'⚠ Próximo do jogo: confirme se o rival mudou':'✓ Tática disponível'} · ${esc(tacticAgeText(s))}</p>
+   <p class="small muted">${esc(opponentReadTextV59(s))}</p></div></div>
+   <table class="tactic-table persistent-table">${tacticRows(s.tactic).map(([k,v])=>`<tr><td>${esc(k)}</td><td><b>${esc(v)}</b></td></tr>`).join('')}</table>
+   <div class="actions">
+    <button class="btn" onclick="refreshTacticFromSavedDataV59(${s.slotNumber})">Recalcular com dados atuais</button>
+    <button class="btn secondary" onclick="openTacticVideoRefreshV59(${s.slotNumber})">Reanalisar adversário por vídeo</button>
+    <button class="btn secondary" onclick="strong433Modal(${s.slotNumber})">🔥 4-3-3 Forte</button>
+    <button class="btn secondary" onclick="manualTacticModal(${s.slotNumber})">Editar</button>
+   </div>
+ </div>`;
+}
+function chooseNextAction(){
+ const s=state.slots[selectedSlot-1];
+ if(s?.status==='active'){
+   const late=overdueSchedule(s);
+   if(late){
+     const i=scheduleIndexOf(s,late);
+     return {slot:s,title:`Registrar resultado contra ${late.opponent||s.opponent.teamName||'adversário'}`,detail:`A partida estava marcada para ${fmtDateTime(late.dateTime)}.`,button:`<button class="btn danger" onclick="resultModal(${s.slotNumber},${i})">Registrar resultado</button>`};
+   }
+   const next=nextFutureRow(s);
+   if(next){
+     const ms=new Date(next.dateTime).getTime()-Date.now();
+     if(ms<=settings.notifyMinutes*60000&&ms>0){
+       return {slot:s,title:`Revisar tática${s.opponent.human===true?' contra humano':''}`,detail:`Faltam ${countdown(next.dateTime)}. Use os dados já salvos ou envie vídeo novo apenas se o rival mudou.`,button:`<button class="btn" onclick="refreshTacticFromSavedDataV59(${s.slotNumber})">Recalcular agora</button><button class="btn secondary" onclick="openTacticVideoRefreshV59(${s.slotNumber})">Vídeo novo</button>`};
+     }
+     if(!next.tacticSnapshot&&!s.tactic){
+       return {slot:s,title:`Gerar tática para ${next.opponent||'o próximo jogo'}`,detail:`${fmtDateTime(next.dateTime)} · ${next.venue||'Local NI'}`,button:`<button class="btn" onclick="openTacticVideoRefreshV59(${s.slotNumber})">Analisar adversário</button>`};
+     }
+   }
+ }
+ return null;
+}
+function slotCardHtml(s){
+ const active=s.status==='active',selected=s.slotNumber===selectedSlot,opp=s.opponent||{},me=s.myTeam||{};
+ return `<article class="slot-card ${selected?'selected-slot':''}" onclick="if(event.target.tagName!=='BUTTON')setSelectedSlot(${s.slotNumber})"><div class="slot-top"><div><div class="slot-num">SLOT ${s.slotNumber}${s.competitionType==='Batalha'?' · BATALHA':''}</div><div class="slot-team">${esc(s.teamName||'Slot disponível')}</div><div class="slot-comp">${esc(s.competitionName||'Sem competição')}</div></div><span class="status-pill">${active?(s.tactic?'Tática pronta':'Ativo'):'Livre'}</span></div>${active?`<div class="matchline"><b>${esc(opp.teamName||'Adversário NI')}</b><div class="small muted">${esc(s.match.venue||'Local NI')} · R${esc(s.round)} · ${s.match.nextMatchAt?countdown(s.match.nextMatchAt):'Horário NI'}</div></div><div class="kpis"><div class="kpi"><span>Força</span><b>${esc(me.overall)}</b></div><div class="kpi"><span>Rival</span><b>${esc(opp.overall)}</b></div><div class="kpi"><span>Formação rival</span><b>${esc(opp.formation)}</b></div><div class="kpi"><span>Tática</span><b>${s.tactic?'Pronta':'—'}</b></div></div><div class="actions">${s.tactic?`<button class="btn" onclick="event.stopPropagation();refreshTacticFromSavedDataV59(${s.slotNumber})">Atualizar tática</button><button class="btn secondary" onclick="event.stopPropagation();openTacticVideoRefreshV59(${s.slotNumber})">Vídeo novo</button>`:`<button class="btn" onclick="event.stopPropagation();openTacticVideoRefreshV59(${s.slotNumber})">Gerar tática</button>`}<button class="btn secondary" onclick="event.stopPropagation();strong433Modal(${s.slotNumber})">🔥 4-3-3</button><button class="btn secondary" onclick="event.stopPropagation();resultModal(${s.slotNumber})">Resultado</button></div>`:`<div class="actions"><button class="btn" onclick="event.stopPropagation();setSelectedSlot(${s.slotNumber});configureSlot(${s.slotNumber})">Criar competição</button></div>`}</article>`;
+}
+
+Object.assign(window,{refreshTacticFromSavedDataV59,openTacticVideoRefreshV59,applyCalendarAnchorV54,showView,setSelectedSlot,prepareReanalysis,configureSlot,saveSlotConfigV5,openCalendarForSlot,finishCompetition,confirmFinish,slotDetailModal,generateTacticForSlot,tacticModal,manualTacticModal,saveManualTactic,strong433Modal,generateStrong433,resultModal,saveResultV52,runSetupStep,scheduleModal,saveSchedule,downloadIcs,openMarketSnapshot,aiStrategyReview,strategyModal,renderInfo,updateEventIntel,rosterTransactionModal,saveRosterTransaction,saveVideoResultPosition,saveApiKey,clearApiKey,closeModal});
 document.addEventListener('DOMContentLoaded',init);
