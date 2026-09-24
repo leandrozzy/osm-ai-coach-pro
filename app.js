@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION='4.1.0-cloud-video';
+const APP_VERSION='4.2.0-cloud-direct-video';
 const STATE_KEY='osm_ai_coach_pro_state_v4';
 const SETTINGS_KEY='osm_ai_coach_pro_settings_v4';
 const API_KEY_STORAGE='osm_ai_coach_pro_gemini_key';
@@ -35,8 +35,9 @@ function bindEls(){['apiButton','nextAction','slotsGrid','refreshCountdowns','ch
 
 function init(){bindEls();bindNav();bindActions();bindAnalysisModes();hydrateSettings();renderAnalysisMode();renderAll();if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});setInterval(()=>{renderToday();checkNotifications()},30000);checkNotifications()}
 function bindNav(){document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>showView(b.dataset.view)))}
-function bindAnalysisModes(){document.querySelectorAll('[data-analysis-mode]').forEach(b=>b.addEventListener('click',()=>{analysisMode=b.dataset.analysisMode;document.querySelectorAll('[data-analysis-mode]').forEach(x=>x.classList.toggle('active',x===b));renderAnalysisMode()}))}
-function renderAnalysisMode(){if(!els.analysisGuide)return;const tactic=analysisMode==='tactic';els.uploadTitle.textContent=tactic?'Enviar vídeo da partida':'Enviar vídeo do mercado';els.uploadHelp.textContent=tactic?'Grave somente as telas necessárias para analisar a partida. O app cria um resumo visual e faz uma única chamada à IA.':'Grave elenco, treinamento e lista de transferências. Não precisa mostrar Data Analyst nem táticas.';els.autoTacticRow.classList.toggle('hidden',!tactic);els.analysisGuide.innerHTML=tactic?`<h3>Vídeo para gerar a tática</h3><p class="muted small">Mostre apenas estas telas, nesta ordem. Pare 1–2 segundos em cada uma.</p><div class="guide-grid"><div><b>1. Tela da partida</b><span>meu time, rival, força, local, árbitro, CT/treino secreto e bônus quando aparecer</span></div><div><b>2. Data Analyst</b><span>abra o relatório do adversário</span></div><div><b>3. Detalhes do Analyst</b><span>formação, estilo/plano, marcação e impedimento</span></div><div><b>4. Força por setor</b><span>GOL/DEF/MEI/ATA de ambos, se disponível</span></div><div><b>5. Horário</b><span>cronômetro ou horário da próxima partida</span></div></div><div class="actions" style="margin-top:12px"><button class="btn secondary" onclick="manualTacticModal(Number(document.getElementById('slotTarget').value)||1)">Digitar tática usada manualmente</button></div>`:`<h3>Vídeo para Mercado / Evolução</h3><p class="muted small">Este vídeo é separado do vídeo da tática.</p><div class="guide-grid"><div><b>1. Elenco completo</b><span>nome, posição, força/rating, valor e quantidade de jogadores</span></div><div><b>2. Treinamento</b><span>quem está treinando; camisa laranja = treino, não venda</span></div><div><b>3. Lista de transferências</b><span>jogadores disponíveis, posição, rating, idade e preço</span></div><div><b>4. Jogadores à venda</b><span>venda é indicada pelas setas de transferência</span></div></div>`}
+function bindAnalysisModes(){document.querySelectorAll('[data-analysis-mode]').forEach(b=>b.addEventListener('click',()=>{analysisMode=b.dataset.analysisMode;document.querySelectorAll('[data-analysis-mode]').forEach(x=>x.classList.toggle('active',x===b));clearAnalysisUi();renderAnalysisMode()}))}
+function clearAnalysisUi(){if(els.analysisResult)els.analysisResult.innerHTML='';if(els.coveragePanel){els.coveragePanel.innerHTML='';els.coveragePanel.classList.add('hidden')}if(els.mediaPreview)els.mediaPreview.innerHTML='';if(els.mediaInput)els.mediaInput.value='';if(els.analysisProgress)els.analysisProgress.classList.add('hidden')}
+function renderAnalysisMode(){if(!els.analysisGuide)return;const tactic=analysisMode==='tactic';els.uploadTitle.textContent=tactic?'Enviar vídeo da partida':'Enviar vídeo do mercado';els.uploadHelp.textContent=tactic?'Grave somente as telas necessárias para analisar a partida. O vídeo é enviado diretamente à IA com um único prompt.':'Grave elenco, treinamento e lista de transferências. Não precisa mostrar Data Analyst nem táticas.';els.autoTacticRow.classList.toggle('hidden',!tactic);els.analysisGuide.innerHTML=tactic?`<h3>Vídeo para gerar a tática</h3><p class="muted small">Mostre apenas estas telas, nesta ordem. Pare 1–2 segundos em cada uma.</p><div class="guide-grid"><div><b>1. Tela da partida</b><span>meu time, rival, força, local, árbitro, CT/treino secreto e bônus quando aparecer</span></div><div><b>2. Data Analyst</b><span>abra o relatório do adversário</span></div><div><b>3. Detalhes do Analyst</b><span>formação, estilo/plano, marcação e impedimento</span></div><div><b>4. Força por setor</b><span>GOL/DEF/MEI/ATA de ambos, se disponível</span></div><div><b>5. Horário</b><span>cronômetro ou horário da próxima partida</span></div></div><div class="actions" style="margin-top:12px"><button class="btn secondary" onclick="manualTacticModal(Number(document.getElementById('slotTarget').value)||1)">Digitar tática usada manualmente</button></div>`:`<h3>Vídeo para Mercado / Evolução</h3><p class="muted small">Este vídeo é separado do vídeo da tática.</p><div class="guide-grid"><div><b>1. Elenco completo</b><span>nome, posição, força/rating, valor e quantidade de jogadores</span></div><div><b>2. Treinamento</b><span>quem está treinando; camisa laranja = treino, não venda</span></div><div><b>3. Lista de transferências</b><span>jogadores disponíveis, posição, rating, idade e preço</span></div><div><b>4. Jogadores à venda</b><span>venda é indicada pelas setas de transferência</span></div></div>`}
 
 function showView(name){document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x.dataset.view===name));document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));document.getElementById('view-'+name).classList.add('active');if(name==='market')renderMarket();if(name==='history')renderHistory()}
 function bindActions(){
@@ -74,9 +75,125 @@ function confirmFinish(n){const s=state.slots[n-1];state.archives.unshift({...st
 function slotDetailModal(n){const s=state.slots[n-1];const rows=[['Competição',s.competitionName],['Tipo',s.competitionType],['Rodada',`${s.round??'NI'}/${s.totalRounds??'NI'}`],['Adversário',s.opponent.teamName],['Humano',s.opponent.human===true?'Sim':s.opponent.human===false?'Não':'NI'],['Manager rival',s.opponent.manager],['Local',s.match.venue],['Árbitro',s.match.refereeColor||s.match.refereeName],['Minha força',s.myTeam.overall],['Rival',s.opponent.overall],['Meu G/D/M/A',`${s.myTeam.goalkeeper??'NI'}/${s.myTeam.defence??'NI'}/${s.myTeam.midfield??'NI'}/${s.myTeam.attack??'NI'}`],['Rival G/D/M/A',`${s.opponent.goalkeeper??'NI'}/${s.opponent.defence??'NI'}/${s.opponent.midfield??'NI'}/${s.opponent.attack??'NI'}`],['Formação rival',s.opponent.formation],['Plano rival',s.opponent.style],['Marcação rival',s.opponent.marking],['Impedimento rival',boolText(s.opponent.offside)],['CT rival',boolText(s.opponent.trainingCamp)],['Treino secreto rival',boolText(s.opponent.secretTraining)],['Bônus rival',s.opponent.loginBonus===null?'NI':`${s.opponent.loginBonus}%`]];openModal(`<h2>Dados · Slot ${n}</h2><table class="tactic-table">${rows.map(([a,b])=>`<tr><td>${esc(a)}</td><td><b>${esc(b)}</b></td></tr>`).join('')}</table>${s.missing?.length?`<p class="warn-text"><b>Falta:</b> ${s.missing.map(esc).join(', ')}</p>`:''}`)}
 function boolText(v){return v===true?'Sim':v===false?'Não':'NI'}
 
-async function handleFiles(files){if(!files.length)return;if(!localStorage.getItem(API_KEY_STORAGE)){apiModal('Antes de analisar, salve sua chave Gemini.');return}els.analysisResult.innerHTML='';els.coveragePanel.classList.add('hidden');setProgress(2,'Preparando mídia…');els.analysisProgress.classList.remove('hidden');try{const frames=[];let idx=0;for(const file of files){idx++;setProgress(5+idx*5,`Lendo ${file.name}…`);if(file.type.startsWith('video/'))frames.push(...await extractVideoFrames(file));else if(file.type.startsWith('image/'))frames.push(await imageFileToFrame(file))}const selected=dedupeFrames(frames,analysisMode==='tactic'?12:16);renderFramePreview(selected);setProgress(30,`Resumindo ${selected.length} quadros em poucos painéis…`);const sheets=await makeContactSheets(selected,analysisMode==='tactic'?6:8);setProgress(42,`Enviando ${sheets.length} painel(is) para a IA…`);const result=await analyzeFrames(sheets);setProgress(76,'Conferindo e atualizando o slot…');applyVisionResult(result);renderAnalysisResult(result);if(analysisMode==='tactic'&&els.autoTactic.checked){const touched=resolveTouchedSlots(result);let p=82;for(const n of touched){setProgress(p,`Gerando tática do Slot ${n}…`);await generateTacticForSlot(n,true);p+=Math.floor(16/Math.max(1,touched.length))}}state.lastAnalysisAt=nowIso();saveState();setProgress(100,'Concluído');toast(analysisMode==='tactic'?'Dados da partida e tática atualizados':'Mercado atualizado')}catch(e){console.error(e);els.analysisResult.innerHTML=`<div class="result-card"><h3 class="danger-text">Não foi possível concluir</h3><p>${esc(e.message||e)}</p><p class="muted small">Se for erro 503, o app tentará automaticamente outro modelo disponível.</p></div>`;setProgress(100,'Falha na análise')}finally{setTimeout(()=>els.analysisProgress.classList.add('hidden'),1500)}}
+async function handleFiles(files){
+ if(!files.length)return;
+ if(!localStorage.getItem(API_KEY_STORAGE)){apiModal('Antes de analisar, salve sua chave Gemini.');return}
+ clearAnalysisUi();
+ els.analysisProgress.classList.remove('hidden');
+ try{
+   const video=files.find(f=>f.type.startsWith('video/'));
+   const images=files.filter(f=>f.type.startsWith('image/'));
+   let result;
+   if(video){
+     renderVideoPreview(video);
+     setProgress(8,`Preparando ${video.name}…`);
+     result=await analyzeVideoDirect(video);
+   }else if(images.length){
+     setProgress(10,'Preparando imagens…');
+     const frames=[];
+     for(const f of images)frames.push(await imageFileToFrame(f));
+     renderFramePreview(frames.slice(0,4));
+     result=await analyzeImagesDirect(frames.slice(0,6));
+   }else throw new Error('Selecione um vídeo ou imagens do OSM.');
+   setProgress(78,'Atualizando o slot…');
+   applyVisionResult(result);
+   if(analysisMode==='tactic'){
+      applyRecommendedTactics(result);
+   }
+   renderAnalysisResult(result);
+   state.lastAnalysisAt=nowIso();
+   saveState();
+   setProgress(100,'Concluído');
+   toast(analysisMode==='tactic'?'Partida analisada e tática gerada':'Mercado atualizado');
+ }catch(e){
+   console.error(e);
+   els.analysisResult.innerHTML=`<div class="result-card"><h3 class="danger-text">Não foi possível concluir</h3><p>${esc(e.message||e)}</p><p class="muted small">O vídeo não foi misturado com a outra análise. Você pode tentar novamente sem trocar de tela.</p></div>`;
+   setProgress(100,'Falha na análise');
+ }finally{
+   setTimeout(()=>els.analysisProgress.classList.add('hidden'),1500);
+ }
+}
 
-async function makeContactSheets(frames,perSheet=6){const out=[];for(let i=0;i<frames.length;i+=perSheet){const group=frames.slice(i,i+perSheet);const cols=2,cellW=640,cellH=390,rows=Math.ceil(group.length/cols);const c=document.createElement('canvas');c.width=cols*cellW;c.height=rows*cellH;const ctx=c.getContext('2d');ctx.fillStyle='#07111f';ctx.fillRect(0,0,c.width,c.height);for(let j=0;j<group.length;j++){const f=group[j],img=await loadImage(f.dataUrl),x=(j%cols)*cellW,y=Math.floor(j/cols)*cellH;ctx.fillStyle='#fff';ctx.font='18px sans-serif';ctx.fillText(`Quadro ${i+j+1} · ${Math.round(f.time||0)}s`,x+8,y+22);const scale=Math.min(cellW/img.width,(cellH-32)/img.height),w=img.width*scale,h=img.height*scale;ctx.drawImage(img,x+(cellW-w)/2,y+30+(cellH-32-h)/2,w,h)}const dataUrl=c.toDataURL('image/jpeg',.82);out.push({dataUrl,base64:dataUrl.split(',')[1],mimeType:'image/jpeg',name:`painel-${out.length+1}`,time:0,score:100})}return out}
+function renderVideoPreview(file){
+  const url=URL.createObjectURL(file);
+  els.mediaPreview.innerHTML=`<div class="video-selected"><video controls playsinline preload="metadata" src="${url}"></video><div><b>${esc(file.name)}</b><span>${(file.size/1024/1024).toFixed(1)} MB · vídeo enviado diretamente para a IA</span></div></div>`;
+}
+
+async function analyzeImagesDirect(frames){
+ const parts=[{text:visionPrompt()}];
+ for(const f of frames)parts.push({inlineData:{mimeType:f.mimeType,data:f.base64}});
+ return geminiJson(parts,{temperature:.03,maxOutputTokens:9000});
+}
+
+async function analyzeVideoDirect(file){
+ const key=localStorage.getItem(API_KEY_STORAGE);
+ setProgress(18,'Enviando o vídeo ao Gemini…');
+ const uploaded=await uploadGeminiFile(file,key);
+ setProgress(42,'Gemini processando o vídeo…');
+ const ready=await waitGeminiFile(uploaded,key);
+ setProgress(58,'Lendo o vídeo com um único prompt…');
+ const parts=[
+   {text:visionPrompt()},
+   {fileData:{mimeType:ready.mimeType||file.type||'video/mp4',fileUri:ready.uri},mediaProcessing:'AGENTIC'}
+ ];
+ return geminiJson(parts,{temperature:.03,maxOutputTokens:10000});
+}
+
+async function uploadGeminiFile(file,key){
+ const start=await fetch(`https://generativelanguage.googleapis.com/upload/v1beta/files?key=${encodeURIComponent(key)}`,{
+   method:'POST',
+   headers:{
+     'X-Goog-Upload-Protocol':'resumable',
+     'X-Goog-Upload-Command':'start',
+     'X-Goog-Upload-Header-Content-Length':String(file.size),
+     'X-Goog-Upload-Header-Content-Type':file.type||'video/mp4',
+     'Content-Type':'application/json'
+   },
+   body:JSON.stringify({file:{display_name:file.name}})
+ });
+ if(!start.ok)throw new Error(`Falha ao iniciar upload do vídeo (${start.status}).`);
+ const uploadUrl=start.headers.get('x-goog-upload-url');
+ if(!uploadUrl)throw new Error('Gemini não retornou URL de upload. Atualize a página e tente novamente.');
+ const up=await fetch(uploadUrl,{
+   method:'POST',
+   headers:{
+     'X-Goog-Upload-Offset':'0',
+     'X-Goog-Upload-Command':'upload, finalize',
+     'Content-Type':file.type||'video/mp4'
+   },
+   body:file
+ });
+ if(!up.ok)throw new Error(`Falha ao enviar vídeo ao Gemini (${up.status}).`);
+ const data=await up.json();
+ return data.file||data;
+}
+
+async function waitGeminiFile(file,key){
+ let current=file;
+ for(let i=0;i<30;i++){
+   const stateName=String(current.state?.name||current.state||'').toUpperCase();
+   if(stateName==='ACTIVE'||(!stateName&&current.uri))return current;
+   if(stateName==='FAILED')throw new Error('Gemini não conseguiu processar este vídeo.');
+   await new Promise(r=>setTimeout(r,2000));
+   const name=current.name||'';
+   const url=`https://generativelanguage.googleapis.com/v1beta/${name}?key=${encodeURIComponent(key)}`;
+   const r=await fetch(url);
+   if(!r.ok)throw new Error(`Falha ao consultar processamento do vídeo (${r.status}).`);
+   current=await r.json();
+ }
+ throw new Error('O processamento do vídeo demorou demais. Tente novamente.');
+}
+
+function applyRecommendedTactics(result){
+ for(const c of result.captures||[]){
+   const n=resolveCaptureSlot(c);
+   if(!n||!c.recommendedTactic)continue;
+   const s=state.slots[n-1];
+   s.tactic=sanitizeTactic(c.recommendedTactic,s);
+   s.tactic.engine='Gemini vídeo';
+   s.tactic.generatedAt=nowIso();
+ }
+}
 
 function setProgress(p,text){els.progressBar.style.width=`${Math.max(0,Math.min(100,p))}%`;els.progressText.textContent=text}
 async function imageFileToFrame(file){const data=await fileToDataUrl(file);const img=await loadImage(data);return canvasFrameFromImage(img,0,file.name)}
@@ -90,22 +207,107 @@ function pixelDiff(a,b){if(!a||!b||a.length!==b.length)return 100;let s=0;for(le
 function dedupeFrames(frames,max){if(frames.length<=max)return frames.sort((a,b)=>(a.time||0)-(b.time||0));const keep=[];const byScore=[...frames].sort((a,b)=>(b.score||0)-(a.score||0));for(const f of byScore){if(keep.length>=max)break;if(!keep.some(k=>k.name===f.name&&Math.abs((k.time||0)-(f.time||0))<1.2))keep.push(f)}return keep.sort((a,b)=>a.name.localeCompare(b.name)||(a.time||0)-(b.time||0))}
 function renderFramePreview(frames){els.mediaPreview.innerHTML=frames.slice(0,12).map(f=>`<img src="${f.dataUrl}" title="${esc(f.name)} ${Math.round(f.time||0)}s">`).join('')}
 
-function visionPrompt(){const target=els.slotTarget.value;const tacticMode=analysisMode==='tactic';return tacticMode?`Você é um extrator visual especialista em OSM 26. Analise os PAINÉIS enviados como uma única sequência de vídeo. Sua função é extrair SOMENTE os dados necessários para decidir a melhor tática. Não analise mercado/elenco completo e não invente nada.
+function visionPrompt(){
+ const target=els.slotTarget.value;
+ const tacticMode=analysisMode==='tactic';
+ if(tacticMode)return `Você é um especialista em OSM 26 analisando UM VÍDEO real do jogo. Leia a sequência inteira e retorne em UMA ÚNICA RESPOSTA os fatos da partida e UMA tática final completa para eu digitar manualmente no OSM.
 
-PRIORIDADE MÁXIMA: identificar corretamente partida, força dos dois times, força por setor quando visível, casa/fora, árbitro, humano/CPU, bônus, CT/treino secreto e o Data Analyst do rival (formação, estilo/plano, marcação e impedimento). Destino solicitado: ${target}.
+OBJETIVO: maximizar a chance de vitória sem inventar dados.
 
-REGRAS: use null quando não estiver claramente visível; humano=true somente com nick/manager visível; treino secreto/CT=false só se a tela inicial apropriada estiver visível e o indicador estiver ausente; não confunda a MINHA tática atual com a tática do rival; ignore telas de mercado.
+O QUE EXTRAIR DO VÍDEO:
+- slot quando visível (ou use o destino fixo ${target});
+- meu time, rival, competição, rodada;
+- casa/fora;
+- força geral dos dois times;
+- GOL/DEF/MEI/ATA dos dois times quando aparecer;
+- valor do elenco e número de jogadores quando aparecer;
+- estádio;
+- árbitro/cor;
+- humano ou CPU: humano=true somente quando houver nick/manager visível abaixo do time;
+- bônus de login;
+- campo de treinamento e treino secreto;
+- Data Analyst completo do rival: formação, estilo/plano, marcação e impedimento;
+- horário/contagem da próxima partida.
 
-Retorne APENAS JSON válido:
-{"captures":[{"slotNumber":1,"confidence":0.0,"screensSeen":[],"teamName":null,"competitionName":null,"competitionType":null,"round":null,"totalRounds":null,"myTeam":{"overall":null,"goalkeeper":null,"defence":null,"midfield":null,"attack":null,"squadValue":null,"playerCount":null,"stadium":null,"loginBonus":null,"secretTraining":null,"trainingCamp":null},"opponent":{"teamName":null,"human":null,"manager":null,"overall":null,"goalkeeper":null,"defence":null,"midfield":null,"attack":null,"squadValue":null,"playerCount":null,"stadium":null,"loginBonus":null,"secretTraining":null,"trainingCamp":null,"formation":null,"style":null,"marking":null,"offside":null,"tackling":null},"match":{"venue":null,"refereeName":null,"refereeColor":null,"exactDateTimeText":null,"countdownText":null},"roster":[],"market":[],"result":{},"missing":[]}]}`:`Você é um extrator visual especialista no mercado do OSM 26. Analise os PAINÉIS enviados como uma única sequência. NÃO gere tática e NÃO tente extrair Data Analyst. Destino solicitado: ${target}.
+REGRAS:
+1. Se não estiver claramente visível, use null. Nunca estime um dado ausente.
+2. Não confunda a MINHA tela de tática com a tática do rival.
+3. Se treino secreto impedir conhecer a tática rival, mantenha os campos táticos rivais null.
+4. Gere UMA tática, sem alternativas.
+5. Formação deve ser uma formação real do OSM.
+6. Estilo de jogo deve ser um destes: Jogar pelas alas, Jogo de passes, Contra-ataque, Chutar de longe, Bola longa.
+7. sliders pressure, mentality e tempo devem ser inteiros de 0 a 100.
+8. Retorne também marcação, impedimento, desarme e táticas por setor.
+9. Árbitro vermelho/rigoroso: evite desarme excessivo.
+10. Considere humano/CPU, casa/fora, força relativa, setores, CT, treino secreto e Data Analyst.
+11. Não prometa vitória.
 
-Extraia somente: elenco completo visível, posições, ratings, valores, idade quando houver, quem está EM TREINAMENTO (camisa/ícone laranja), quem está À VENDA (setas/ícone de transferência), e lista de transferências com nome, posição, rating, idade e preço. Nunca confunda treino com venda. Use null para dado não visível e não invente nomes/preços.
+RETORNE APENAS JSON VÁLIDO:
+{"captures":[{
+ "slotNumber":1,"confidence":0.0,"screensSeen":[],
+ "teamName":null,"competitionName":null,"competitionType":null,"round":null,"totalRounds":null,
+ "myTeam":{"overall":null,"goalkeeper":null,"defence":null,"midfield":null,"attack":null,"squadValue":null,"playerCount":null,"stadium":null,"loginBonus":null,"secretTraining":null,"trainingCamp":null},
+ "opponent":{"teamName":null,"human":null,"manager":null,"overall":null,"goalkeeper":null,"defence":null,"midfield":null,"attack":null,"squadValue":null,"playerCount":null,"stadium":null,"loginBonus":null,"secretTraining":null,"trainingCamp":null,"formation":null,"style":null,"marking":null,"offside":null,"tackling":null},
+ "match":{"venue":null,"refereeName":null,"refereeColor":null,"exactDateTimeText":null,"countdownText":null},
+ "roster":[],"market":[],"result":{},"missing":[],
+ "recommendedTactic":{"formation":"","gamePlan":"","pressure":0,"mentality":0,"tempo":0,"marking":"À zona","offside":"Não","tackling":"Normal","attackInstruction":"","midfieldInstruction":"","defenceInstruction":"","confidence":"média","reason":""}
+}]}`;
+ return `Você é um especialista em mercado e evolução de elenco no OSM 26 analisando UM VÍDEO real do jogo. NÃO gere tática de partida. Leia o vídeo inteiro e extraia somente elenco, treinamento e transferências para o slot ${target}.
 
-Retorne APENAS JSON válido:
-{"captures":[{"slotNumber":1,"confidence":0.0,"screensSeen":["squad","training","market"],"teamName":null,"competitionName":null,"competitionType":null,"round":null,"totalRounds":null,"myTeam":{},"opponent":{},"match":{},"roster":[{"name":"","position":null,"rating":null,"value":null,"age":null,"training":false,"forSale":false}],"market":[{"name":"","position":null,"rating":null,"attack":null,"defence":null,"value":null,"price":null,"age":null,"club":null}],"result":{},"missing":[]}]}`}
+REGRAS:
+1. Não invente jogador, rating, idade, valor ou preço.
+2. Camisa/ícone laranja = jogador EM TREINAMENTO, não à venda.
+3. Venda = setas/ícone de transferência.
+4. Preserve nomes como aparecem.
+5. Extraia o maior número possível de jogadores ao longo da rolagem do vídeo.
+6. Se um campo não estiver visível, use null.
+
+RETORNE APENAS JSON VÁLIDO:
+{"captures":[{
+ "slotNumber":1,"confidence":0.0,"screensSeen":["squad","training","market"],
+ "teamName":null,"competitionName":null,"competitionType":null,"round":null,"totalRounds":null,
+ "myTeam":{},"opponent":{},"match":{},
+ "roster":[{"name":"","position":null,"rating":null,"value":null,"age":null,"training":false,"forSale":false}],
+ "market":[{"name":"","position":null,"rating":null,"attack":null,"defence":null,"value":null,"price":null,"age":null,"club":null}],
+ "result":{},"missing":[]
+}]}`;
+}
 async function analyzeFrames(frames){if(!frames.length)throw new Error('Nenhum quadro utilizável encontrado.');const parts=[{text:visionPrompt()}];for(const f of frames)parts.push({inlineData:{mimeType:f.mimeType,data:f.base64}});return geminiJson(parts,{temperature:.03,maxOutputTokens:9000})}
-async function geminiJson(parts,opts={}){const key=localStorage.getItem(API_KEY_STORAGE);if(!key)throw new Error('API Gemini não configurada.');let model=settings.model||'gemini-2.5-flash';const body={contents:[{role:'user',parts}],generationConfig:{temperature:opts.temperature??.15,maxOutputTokens:opts.maxOutputTokens||8000,responseMimeType:'application/json'}};let tried=[];for(let attempt=0;attempt<3;attempt++){tried.push(model);let res=await geminiFetch(model,key,body);if(res.ok){const data=await res.json();const text=(data.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('').trim();if(!text)throw new Error('A IA não retornou conteúdo utilizável.');return parseJsonText(text)}const status=res.status,txt=await res.text();if(![400,404,429,500,503].includes(status))throw new Error(`Gemini ${status}: ${txt.slice(0,300)}`);const models=await availableModels(key);const next=models.find(x=>!tried.includes(x));if(!next){if(status===503||status===429){await new Promise(r=>setTimeout(r,1200*(attempt+1)));continue}throw new Error(`Gemini ${status}: ${txt.slice(0,300)}`)}model=next;settings.model=model;saveSettingsObj()}throw new Error('Gemini temporariamente indisponível. Tente novamente em alguns segundos.')}
-function availableModels(key){return fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`).then(r=>r.ok?r.json():{models:[]}).then(d=>{const names=(d.models||[]).filter(m=>(m.supportedGenerationMethods||[]).includes('generateContent')).map(m=>(m.name||'').replace('models/',''));const pref=['gemini-2.5-flash','gemini-2.5-flash-lite','gemini-2.0-flash'];return [...pref.filter(x=>names.includes(x)),...names.filter(x=>/flash/i.test(x)&&!pref.includes(x)),...names.filter(x=>!pref.includes(x))]})}
+async function geminiJson(parts,opts={}){
+ const key=localStorage.getItem(API_KEY_STORAGE);
+ if(!key)throw new Error('API Gemini não configurada.');
+ const candidates=await availableModels(key);
+ let ordered=[settings.model,...candidates].filter((x,i,a)=>x&&a.indexOf(x)===i);
+ let last='';
+ for(const model of ordered){
+   for(let tryNo=0;tryNo<2;tryNo++){
+     const body={contents:[{role:'user',parts}],generationConfig:{temperature:opts.temperature??.12,maxOutputTokens:opts.maxOutputTokens||9000,responseMimeType:'application/json'}};
+     let res;
+     try{res=await geminiFetch(model,key,body)}catch(e){last=e.message;continue}
+     if(res.ok){
+       const data=await res.json();
+       const text=(data.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('').trim();
+       if(!text)throw new Error('A IA não retornou conteúdo utilizável.');
+       settings.model=model;saveSettingsObj();hydrateSettings();
+       return parseJsonText(text);
+     }
+     const status=res.status,txt=await res.text();last=`Gemini ${status}: ${txt.slice(0,260)}`;
+     if(![429,500,503].includes(status))break;
+     await new Promise(r=>setTimeout(r,1600*(tryNo+1)));
+   }
+ }
+ throw new Error(last||'Gemini temporariamente indisponível.');
+}
+async function availableModels(key){
+ try{
+   const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`);
+   if(!r.ok)return ['gemini-3.8-flash','gemini-3.7-flash','gemini-3.6-flash','gemini-3.5-flash-lite','gemini-3.5-flash'];
+   const d=await r.json();
+   const names=(d.models||[]).filter(m=>(m.supportedGenerationMethods||[]).includes('generateContent')).map(m=>(m.name||'').replace('models/',''));
+   const pref=['gemini-3.8-flash','gemini-3.7-flash','gemini-3.6-flash','gemini-3.5-flash-lite','gemini-3.5-flash'];
+   return [...pref.filter(x=>names.includes(x)),...names.filter(x=>/flash/i.test(x)&&!pref.includes(x))];
+ }catch{return ['gemini-3.8-flash','gemini-3.7-flash','gemini-3.6-flash','gemini-3.5-flash-lite','gemini-3.5-flash']}
+}
 function geminiFetch(model,key,body){return fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},body:JSON.stringify(body)})}
 function parseJsonText(text){let s=text.trim().replace(/^```(?:json)?/i,'').replace(/```$/,'').trim();try{return JSON.parse(s)}catch{const a=s.indexOf('{'),b=s.lastIndexOf('}');if(a>=0&&b>a)return JSON.parse(s.slice(a,b+1));throw new Error('Resposta da IA não veio em JSON válido.') }}
 async function pickAvailableModel(key){try{return (await availableModels(key))[0]||null}catch{return null}}
@@ -121,7 +323,7 @@ function buildMissing(s,extra){const m=[];if(!s.teamName)m.push('meu time');if(!
 function parseCountdownToIso(text){if(!text)return null;const s=String(text).toLowerCase();let ms=0;const d=s.match(/(\d+)\s*d/),h=s.match(/(\d+)\s*h/),m=s.match(/(\d+)\s*m/);if(d)ms+=Number(d[1])*86400000;if(h)ms+=Number(h[1])*3600000;if(m)ms+=Number(m[1])*60000;return ms?new Date(Date.now()+ms).toISOString():null}
 function parseLooseDateTime(text){if(!text)return null;const d=new Date(text);return Number.isNaN(d.getTime())?null:d}
 function recordExtractedResult(s,r){if((s.results||[]).some(x=>x.score===r.score&&x.opponent===r.opponent))return;s.results=s.results||[];s.results.push({createdAt:nowIso(),score:r.score,gf:r.gf,ga:r.ga,opponent:r.opponent||s.opponent.teamName,stats:r.stats||{},tactic:s.tactic?structuredClone(s.tactic):null})}
-function renderAnalysisResult(result){const caps=result.captures||[];const cov={};for(const c of caps)for(const x of c.screensSeen||[])cov[x]=true;els.coveragePanel.classList.remove('hidden');els.coveragePanel.innerHTML=`<b>Cobertura detectada</b><div class="coverage-grid">${Object.entries(COVERAGE_LABELS).map(([k,l])=>`<div class="coverage-item ${cov[k]?'ok':'no'}">${cov[k]?'✓':'○'} ${esc(l)}</div>`).join('')}</div>`;els.analysisResult.innerHTML=caps.map(c=>{const n=resolveCaptureSlot(c);return `<div class="result-card"><h3>${n?`Slot ${n} · `:''}${esc(c.teamName||'Time não identificado')}</h3><div class="data-grid"><div class="data-cell"><span>Adversário</span><b>${esc(c.opponent?.teamName)}</b></div><div class="data-cell"><span>Força</span><b>${esc(c.myTeam?.overall)} × ${esc(c.opponent?.overall)}</b></div><div class="data-cell"><span>Formação rival</span><b>${esc(c.opponent?.formation)}</b></div><div class="data-cell"><span>Mercado</span><b>${(c.market||[]).length} jogadores</b></div></div>${c.missing?.length?`<p class="small warn-text">Ainda faltou mostrar: ${c.missing.map(esc).join(', ')}</p>`:'<p class="small good-text">Leitura principal completa.</p>'}</div>`}).join('')||'<div class="result-card">Nenhum slot foi identificado.</div>'}
+function renderAnalysisResult(result){const caps=result.captures||[];const cov={};for(const c of caps)for(const x of c.screensSeen||[])cov[x]=true;els.coveragePanel.classList.remove('hidden');els.coveragePanel.innerHTML=`<b>Cobertura detectada</b><div class="coverage-grid">${Object.entries(COVERAGE_LABELS).map(([k,l])=>`<div class="coverage-item ${cov[k]?'ok':'no'}">${cov[k]?'✓':'○'} ${esc(l)}</div>`).join('')}</div>`;els.analysisResult.innerHTML=caps.map(c=>{const n=resolveCaptureSlot(c);return `<div class="result-card"><h3>${n?`Slot ${n} · `:''}${esc(c.teamName||'Time não identificado')}</h3><div class="data-grid"><div class="data-cell"><span>Adversário</span><b>${esc(c.opponent?.teamName)}</b></div><div class="data-cell"><span>Força</span><b>${esc(c.myTeam?.overall)} × ${esc(c.opponent?.overall)}</b></div><div class="data-cell"><span>Formação rival</span><b>${esc(c.opponent?.formation)}</b></div><div class="data-cell"><span>Mercado</span><b>${(c.market||[]).length} jogadores</b></div></div>${c.recommendedTactic?`<p class="small good-text"><b>Tática gerada no mesmo processamento:</b> ${esc(c.recommendedTactic.formation)} · ${esc(c.recommendedTactic.gamePlan)} · P ${esc(c.recommendedTactic.pressure)} / E ${esc(c.recommendedTactic.mentality)} / R ${esc(c.recommendedTactic.tempo)}</p>`:''}${c.missing?.length?`<p class="small warn-text">Ainda faltou mostrar: ${c.missing.map(esc).join(', ')}</p>`:'<p class="small good-text">Leitura principal completa.</p>'}</div>`}).join('')||'<div class="result-card">Nenhum slot foi identificado.</div>'}
 
 function tacticContext(s){const recent=(s.results||[]).slice(-8).map(r=>({opponent:r.opponent,score:r.score,result:resultLabel(r),tactic:r.tactic}));return {slotNumber:s.slotNumber,competitionType:s.competitionType,teamName:s.teamName,round:s.round,totalRounds:s.totalRounds,myTeam:s.myTeam,opponent:s.opponent,match:s.match,recentResults:recent,allowedFormations:FORMATIONS,allowedGamePlans:GAME_PLANS}}
 function resultLabel(r){if(Number.isFinite(r.gf)&&Number.isFinite(r.ga))return r.gf>r.ga?'Vitória':r.gf<r.ga?'Derrota':'Empate';return null}
