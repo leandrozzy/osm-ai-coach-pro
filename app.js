@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION='4.5.0-cloud-scene-ocr';
+const APP_VERSION='4.9.0-cloud-calendar-results';
 const STATE_KEY='osm_ai_coach_pro_state_v4';
 const SETTINGS_KEY='osm_ai_coach_pro_settings_v4';
 const API_KEY_STORAGE='osm_ai_coach_pro_gemini_key';
@@ -9,7 +9,7 @@ const GAME_PLANS=['Jogar pelas alas','Jogo de passes','Contra-ataque','Chutar de
 const COVERAGE_LABELS={dashboard:'Tela inicial',analyst:'Data Analyst',analystDetails:'Detalhes do analista',squad:'Elenco',market:'Mercado',calendar:'Calendário/horário',training:'Treinamento',result:'Resultado/estatísticas'};
 const els={};
 
-function defaultSlot(n){return {slotNumber:n,status:'empty',teamName:null,competitionName:null,competitionType:null,round:null,totalRounds:null,createdAt:null,updatedAt:null,myTeam:{overall:null,goalkeeper:null,defence:null,midfield:null,attack:null,squadValue:null,playerCount:null,stadium:null,loginBonus:null,secretTraining:null,trainingCamp:null},opponent:{teamName:null,human:null,manager:null,overall:null,goalkeeper:null,defence:null,midfield:null,attack:null,squadValue:null,playerCount:null,stadium:null,loginBonus:null,secretTraining:null,trainingCamp:null,formation:null,style:null,marking:null,offside:null,tackling:null},match:{venue:null,refereeName:null,refereeColor:null,nextMatchAt:null,countdownText:null},roster:[],market:[],coverage:{},missing:[],tactic:null,marketPlan:null,results:[],notes:[]};}
+function defaultSlot(n){return {slotNumber:n,status:'empty',teamName:null,competitionName:null,competitionType:null,round:null,totalRounds:null,createdAt:null,updatedAt:null,myTeam:{overall:null,goalkeeper:null,defence:null,midfield:null,attack:null,squadValue:null,playerCount:null,stadium:null,loginBonus:null,secretTraining:null,trainingCamp:null},opponent:{teamName:null,human:null,manager:null,overall:null,goalkeeper:null,defence:null,midfield:null,attack:null,squadValue:null,playerCount:null,stadium:null,loginBonus:null,secretTraining:null,trainingCamp:null,formation:null,style:null,marking:null,offside:null,tackling:null},match:{venue:null,refereeName:null,refereeColor:null,nextMatchAt:null,countdownText:null},defaultMatchTime:null,schedule:[],roster:[],market:[],coverage:{},missing:[],tactic:null,marketPlan:null,results:[],notes:[]};}
 function defaultState(){return {version:APP_VERSION,slots:[1,2,3,4].map(defaultSlot),archives:[],eventIntel:null,lastAnalysisAt:null};}
 function defaultSettings(){return {model:'gemini-3.8-flash',notifyMinutes:20,userNick:'leandrozzy',notifyEnabled:true,localOcr:true};}
 function safeParse(s,fallback){try{return JSON.parse(s)}catch{return fallback}}
@@ -33,11 +33,11 @@ let analysisMode='tactic';
 
 function bindEls(){['apiButton','nextAction','activeTacticPanel','slotSwitcher','slotsGrid','refreshCountdowns','chooseMedia','mediaInput','uploadZone','uploadTitle','uploadHelp','slotTarget','autoTactic','autoTacticRow','analysisGuide','analysisProgress','progressBar','progressText','mediaPreview','coveragePanel','analysisResult','marketContent','historyContent','updateEvents','modelSelect','notifyMinutes','userNick','notifyEnabled','requestNotification','saveSettings','exportData','importData','modal','modalBody','modalClose','toast'].forEach(id=>els[id]=document.getElementById(id));}
 
-function init(){bindEls();bindNav();bindActions();bindAnalysisModes();hydrateSettings();renderSlotSwitcher();renderAnalysisMode();renderAll();if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});setInterval(()=>{renderToday();checkNotifications()},30000);checkNotifications()}
+function init(){bindEls();bindNav();bindActions();bindAnalysisModes();hydrateSettings();renderSlotSwitcher();renderAnalysisMode();renderAll();setInterval(()=>{renderToday();checkNotifications()},30000);checkNotifications()}
 function bindNav(){document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>showView(b.dataset.view)))}
 function bindAnalysisModes(){document.querySelectorAll('[data-analysis-mode]').forEach(b=>b.addEventListener('click',()=>{analysisMode=b.dataset.analysisMode;document.querySelectorAll('[data-analysis-mode]').forEach(x=>x.classList.toggle('active',x===b));clearAnalysisUi();renderAnalysisMode()}))}
 function clearAnalysisUi(){if(els.analysisResult)els.analysisResult.innerHTML='';if(els.coveragePanel){els.coveragePanel.innerHTML='';els.coveragePanel.classList.add('hidden')}if(els.mediaPreview)els.mediaPreview.innerHTML='';if(els.mediaInput)els.mediaInput.value='';if(els.analysisProgress)els.analysisProgress.classList.add('hidden')}
-function renderAnalysisMode(){if(!els.analysisGuide)return;const tactic=analysisMode==='tactic';els.uploadTitle.textContent=tactic?'Enviar vídeo da partida':'Enviar vídeo do mercado';els.uploadHelp.textContent=tactic?'Grave as telas da partida e do Data Analyst. O OCR local reforçado tenta ler tudo antes de chamar a IA.':'Grave elenco, treinamento e lista de transferências. Não precisa mostrar Data Analyst nem táticas.';els.autoTacticRow.classList.toggle('hidden',!tactic);els.analysisGuide.innerHTML=tactic?`<h3>Vídeo para gerar a tática</h3><p class="muted small">Mostre apenas estas telas, nesta ordem. Pare 1–2 segundos em cada uma.</p><div class="guide-grid"><div><b>1. Tela da partida</b><span>meu time, rival, força, local, árbitro, CT/treino secreto e bônus quando aparecer</span></div><div><b>2. Data Analyst</b><span>abra o relatório do adversário</span></div><div><b>3. Detalhes do Analyst</b><span>formação, estilo/plano, marcação e impedimento</span></div><div><b>4. Força por setor</b><span>GOL/DEF/MEI/ATA de ambos, se disponível</span></div><div><b>5. Horário</b><span>cronômetro ou horário da próxima partida</span></div></div><div class="actions" style="margin-top:12px"><button class="btn secondary" onclick="manualTacticModal(Number(document.getElementById('slotTarget').value)||1)">Digitar tática usada manualmente</button></div>`:`<h3>Vídeo para Mercado / Evolução</h3><p class="muted small">Este vídeo é separado do vídeo da tática.</p><div class="guide-grid"><div><b>1. Elenco completo</b><span>nome, posição, força/rating, valor e quantidade de jogadores</span></div><div><b>2. Treinamento</b><span>quem está treinando; camisa laranja = treino, não venda</span></div><div><b>3. Lista de transferências</b><span>jogadores disponíveis, posição, rating, idade e preço</span></div><div><b>4. Jogadores à venda</b><span>venda é indicada pelas setas de transferência</span></div></div>`}
+function renderAnalysisMode(){if(!els.analysisGuide)return;const tactic=analysisMode==='tactic';els.uploadTitle.textContent=tactic?'Enviar vídeo da partida':'Enviar vídeo do mercado';els.uploadHelp.textContent=tactic?'Grave as 6 telas nesta ordem: partida, meu elenco, elenco rival, analista resumo, analista marcação/impedimento e analista formação.':'Grave elenco, treinamento e lista de transferências. Não precisa mostrar Data Analyst nem táticas.';els.autoTacticRow.classList.toggle('hidden',!tactic);els.analysisGuide.innerHTML=tactic?`<h3>Vídeo para gerar a tática</h3><p class="muted small">Mostre apenas estas telas, nesta ordem. Pare 1–2 segundos em cada uma.</p><div class="guide-grid"><div><b>1. Tela da partida</b><span>meu time, rival, força, local, árbitro, CT/treino secreto e bônus quando aparecer</span></div><div><b>2. Data Analyst</b><span>abra o relatório do adversário</span></div><div><b>3. Detalhes do Analyst</b><span>formação, estilo/plano, marcação e impedimento</span></div><div><b>4. Força por setor</b><span>GOL/DEF/MEI/ATA de ambos, se disponível</span></div><div><b>5. Horário</b><span>cronômetro ou horário da próxima partida</span></div></div><div class="actions" style="margin-top:12px"><button class="btn secondary" onclick="manualTacticModal(Number(document.getElementById('slotTarget').value)||1)">Digitar tática usada manualmente</button></div>`:`<h3>Vídeo para Mercado / Evolução</h3><p class="muted small">Este vídeo é separado do vídeo da tática.</p><div class="guide-grid"><div><b>1. Elenco completo</b><span>nome, posição, força/rating, valor e quantidade de jogadores</span></div><div><b>2. Treinamento</b><span>quem está treinando; camisa laranja = treino, não venda</span></div><div><b>3. Lista de transferências</b><span>jogadores disponíveis, posição, rating, idade e preço</span></div><div><b>4. Jogadores à venda</b><span>venda é indicada pelas setas de transferência</span></div></div>`}
 
 function showView(name){document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x.dataset.view===name));document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));document.getElementById('view-'+name).classList.add('active');if(name==='market')renderMarket();if(name==='history')renderHistory()}
 function bindActions(){
@@ -67,13 +67,16 @@ function slotCardHtml(s){
 }
 function countdown(iso){const t=new Date(iso).getTime()-Date.now();if(!Number.isFinite(t))return 'Horário NI';if(t<=0)return 'Horário do jogo chegou';const m=Math.floor(t/60000),d=Math.floor(m/1440),h=Math.floor((m%1440)/60),mi=m%60;return [d?`${d}d`:null,h?`${h}h`:null,`${mi}min`].filter(Boolean).join(' ')}
 
-function configureSlot(n){const s=state.slots[n-1];openModal(`<h2>${s.status==='active'?'Editar':'Criar'} competição · Slot ${n}</h2><div class="form-card"><label>Meu time<input id="cfgTeam" value="${esc(s.teamName||'')}"></label><label>Competição<input id="cfgComp" value="${esc(s.competitionName||'')}"></label><label>Tipo<select id="cfgType"><option${s.competitionType==='Liga normal'?' selected':''}>Liga normal</option><option${s.competitionType==='Batalha'?' selected':''}>Batalha</option><option${s.competitionType==='Copa'?' selected':''}>Copa</option><option${s.competitionType==='Torneio'?' selected':''}>Torneio</option></select></label><div class="data-grid"><label>Rodada<input id="cfgRound" type="number" min="1" value="${esc(s.round||1)}"></label><label>Total<input id="cfgTotal" type="number" min="1" value="${esc(s.totalRounds||34)}"></label></div><button class="btn" onclick="saveSlotConfig(${n})">Salvar alterações</button></div>`)}
-function saveSlotConfig(n){const s=state.slots[n-1];s.status='active';s.teamName=document.getElementById('cfgTeam').value.trim()||s.teamName;s.competitionName=document.getElementById('cfgComp').value.trim()||s.competitionName;s.competitionType=document.getElementById('cfgType').value;s.round=Number(document.getElementById('cfgRound').value)||1;s.totalRounds=Number(document.getElementById('cfgTotal').value)||null;s.createdAt=s.createdAt||nowIso();s.updatedAt=nowIso();saveState();closeModal();toast('Competição salva')}
+function configureSlot(n){const s=state.slots[n-1];openModal(`<h2>${s.status==='active'?'Editar':'Criar'} competição · Slot ${n}</h2><div class="form-card"><label>Meu time<input id="cfgTeam" value="${esc(s.teamName||'')}"></label><label>Competição<input id="cfgComp" value="${esc(s.competitionName||'')}"></label><label>Tipo<select id="cfgType"><option${s.competitionType==='Liga normal'?' selected':''}>Liga normal</option><option${s.competitionType==='Batalha'?' selected':''}>Batalha</option><option${s.competitionType==='Copa'?' selected':''}>Copa</option><option${s.competitionType==='Torneio'?' selected':''}>Torneio</option></select></label><div class="data-grid"><label>Rodada<input id="cfgRound" type="number" min="1" value="${esc(s.round||1)}"></label><label>Total<input id="cfgTotal" type="number" min="1" value="${esc(s.totalRounds||34)}"></label></div><label>Horário padrão dos jogos<input id="cfgDailyTime" type="time" value="${esc(s.defaultMatchTime||'')}"></label><p class="muted small">Se a liga costuma jogar diariamente no mesmo horário, use este horário como fallback. Um vídeo do Calendário pode substituir pelas datas/horários reais.</p><div class="actions"><button class="btn" onclick="saveSlotConfig(${n})">Salvar alterações</button><button class="btn secondary" onclick="openCalendarForSlot(${n})">Ler calendário por vídeo</button></div></div>`)}
+function saveSlotConfig(n){const s=state.slots[n-1];s.status='active';s.teamName=document.getElementById('cfgTeam').value.trim()||s.teamName;s.competitionName=document.getElementById('cfgComp').value.trim()||s.competitionName;s.competitionType=document.getElementById('cfgType').value;s.round=Number(document.getElementById('cfgRound').value)||1;s.totalRounds=Number(document.getElementById('cfgTotal').value)||null;s.defaultMatchTime=document.getElementById('cfgDailyTime').value||null;s.createdAt=s.createdAt||nowIso();s.updatedAt=nowIso();ensureNextMatchFromScheduleOrDefault(s);saveState();closeModal();toast('Competição salva')}
+function openCalendarForSlot(n){closeModal();setSelectedSlot(n);analysisMode='calendar';document.querySelectorAll('[data-analysis-mode]').forEach(x=>x.classList.toggle('active',x.dataset.analysisMode==='calendar'));clearAnalysisUi();renderAnalysisMode();showView('analyze');if(els.slotTarget)els.slotTarget.value=String(n)}
+function ensureNextMatchFromScheduleOrDefault(s){const now=Date.now();const future=(s.schedule||[]).filter(x=>!x.played&&x.dateTime&&new Date(x.dateTime).getTime()>now).sort((a,b)=>new Date(a.dateTime)-new Date(b.dateTime));if(future.length){s.match.nextMatchAt=future[0].dateTime;return}if(!s.defaultMatchTime)return;const [hh,mm]=s.defaultMatchTime.split(':').map(Number);if(!Number.isFinite(hh)||!Number.isFinite(mm))return;let d=new Date();d.setHours(hh,mm,0,0);if(d.getTime()<=now)d.setDate(d.getDate()+1);s.match.nextMatchAt=d.toISOString()}
 function finishCompetition(n){const s=state.slots[n-1];if(s.status!=='active')return;openModal(`<h2>Finalizar competição?</h2><p><b>${esc(s.teamName)}</b> · ${esc(s.competitionName)}</p><p class="muted">A competição será arquivada com resultados, táticas e histórico. O Slot ${n} ficará livre.</p><div class="actions"><button class="btn danger" onclick="confirmFinish(${n})">Finalizar competição</button><button class="btn secondary" onclick="closeModal()">Cancelar</button></div>`)}
 function confirmFinish(n){const s=state.slots[n-1];state.archives.unshift({...structuredClone(s),finishedAt:nowIso()});state.slots[n-1]=defaultSlot(n);saveState();closeModal();toast(`Slot ${n} liberado; competição arquivada`)}
 
 function slotDetailModal(n){const s=state.slots[n-1];const rows=[['Competição',s.competitionName],['Tipo',s.competitionType],['Rodada',`${s.round??'NI'}/${s.totalRounds??'NI'}`],['Adversário',s.opponent.teamName],['Humano',s.opponent.human===true?'Sim':s.opponent.human===false?'Não':'NI'],['Manager rival',s.opponent.manager],['Local',s.match.venue],['Árbitro',s.match.refereeColor||s.match.refereeName],['Minha força',s.myTeam.overall],['Rival',s.opponent.overall],['Meu G/D/M/A',`${s.myTeam.goalkeeper??'NI'}/${s.myTeam.defence??'NI'}/${s.myTeam.midfield??'NI'}/${s.myTeam.attack??'NI'}`],['Rival G/D/M/A',`${s.opponent.goalkeeper??'NI'}/${s.opponent.defence??'NI'}/${s.opponent.midfield??'NI'}/${s.opponent.attack??'NI'}`],['Formação rival',s.opponent.formation],['Plano rival',s.opponent.style],['Marcação rival',s.opponent.marking],['Impedimento rival',boolText(s.opponent.offside)],['CT rival',boolText(s.opponent.trainingCamp)],['Treino secreto rival',boolText(s.opponent.secretTraining)],['Bônus rival',s.opponent.loginBonus===null?'NI':`${s.opponent.loginBonus}%`]];openModal(`<h2>Dados · Slot ${n}</h2><table class="tactic-table">${rows.map(([a,b])=>`<tr><td>${esc(a)}</td><td><b>${esc(b)}</b></td></tr>`).join('')}</table>${s.missing?.length?`<p class="warn-text"><b>Falta:</b> ${s.missing.map(esc).join(', ')}</p>`:''}`)}
 function boolText(v){return v===true?'Sim':v===false?'Não':'NI'}
+
 
 async function handleFiles(files){
  if(!files.length)return;
@@ -87,36 +90,109 @@ async function handleFiles(files){
    if(video){
      renderVideoPreview(video);
      setProgress(6,'Selecionando quadros importantes localmente…');
-     const frames=await extractVideoFramesFast(video,analysisMode==='tactic'?12:18);
-     renderFramePreview(frames.slice(0,6));
-     setProgress(20,'Lendo texto localmente com OCR…');
+     const frames=await extractVideoFramesFast(video,analysisMode==='tactic'?18:20);
+     setProgress(18,'Lendo texto localmente com OCR…');
      const ocr=await runLocalOcr(frames);
-     setProgress(55,'Montando os campos para a IA…');
-     const evidence=selectVisualEvidence(frames,analysisMode==='tactic'?4:3);
-     result=await analyzeOcrPackage(ocr,evidence);
+     if(analysisMode==='tactic'){
+       const selected=selectRequiredTacticFrames(frames,ocr);
+       renderRequiredTacticPreview(selected);
+       const requiredFrames=assertAllRequiredTacticScreens(selected);
+       setProgress(58,'Enviando as 6 telas obrigatórias para a IA…');
+       result=await analyzeOcrPackage(ocr,requiredFrames);
+     }else if(analysisMode==='calendar'){
+       const evidence=selectVisualEvidence(frames,5);renderFramePreview(evidence);setProgress(58,'Lendo calendário, casa/fora e taça…');result=await analyzeCalendarOcr(ocr,evidence);applyCalendarResult(result);
+     }else if(analysisMode==='result'){
+       const evidence=selectVisualEvidence(frames,6);renderFramePreview(evidence);setProgress(58,'Lendo placar, estatísticas e cartões…');result=await analyzeResultOcr(ocr,evidence);applyResultVideo(result);
+     }else{
+       const evidence=selectVisualEvidence(frames,3);renderFramePreview(evidence);setProgress(58,'Montando mercado/evolução para a IA…');result=await analyzeOcrPackage(ocr,evidence);
+     }
    }else if(images.length){
      setProgress(10,'Preparando imagens…');
      const frames=[];
      for(const f of images)frames.push(await imageFileToFrame(f));
-     renderFramePreview(frames.slice(0,6));
-     setProgress(28,'Lendo texto localmente com OCR…');
-     const ocr=await runLocalOcr(frames.slice(0,8));
-     result=await analyzeOcrPackage(ocr,selectVisualEvidence(frames,analysisMode==='tactic'?4:3));
+     setProgress(22,'Lendo texto localmente com OCR…');
+     const ocr=await runLocalOcr(frames);
+     if(analysisMode==='tactic'){
+       const selected=selectRequiredTacticFrames(frames,ocr);
+       renderRequiredTacticPreview(selected);
+       const requiredFrames=assertAllRequiredTacticScreens(selected);
+       result=await analyzeOcrPackage(ocr,requiredFrames);
+     }else if(analysisMode==='calendar'){
+       const evidence=selectVisualEvidence(frames,5);renderFramePreview(evidence);result=await analyzeCalendarOcr(ocr,evidence);applyCalendarResult(result);
+     }else if(analysisMode==='result'){
+       const evidence=selectVisualEvidence(frames,6);renderFramePreview(evidence);result=await analyzeResultOcr(ocr,evidence);applyResultVideo(result);
+     }else{
+       const evidence=selectVisualEvidence(frames,3);renderFramePreview(evidence);result=await analyzeOcrPackage(ocr,evidence);
+     }
    }else throw new Error('Selecione um vídeo ou imagens do OSM.');
 
    setProgress(78,'Atualizando o slot…');
-   applyVisionResult(result);
+   if(!['calendar','result'].includes(analysisMode))applyVisionResult(result);
    if(analysisMode==='tactic')applyRecommendedTactics(result);
-   renderAnalysisResult(result);
+   if(analysisMode==='calendar')renderCalendarResult(result);else if(analysisMode==='result')renderResultVideo(result);else renderAnalysisResult(result);
    state.lastAnalysisAt=nowIso();
    saveState();
    setProgress(100,'Concluído');
-   toast(analysisMode==='tactic'?'Partida analisada e tática gerada':'Mercado atualizado');
+   toast(analysisMode==='tactic'?'Partida analisada e tática gerada':analysisMode==='calendar'?'Calendário atualizado':analysisMode==='result'?'Resultado registrado e aprendizado atualizado':'Mercado atualizado');
  }catch(e){
    console.error(e);
-   els.analysisResult.innerHTML=`<div class="result-card"><h3 class="danger-text">Não foi possível concluir</h3><p>${esc(e.message||e)}</p><p class="muted small">O app usa OCR local primeiro. Se o OCR falhar, tente um vídeo mais curto e pare 1–2 segundos em cada tela.</p></div>`;
+   const rigidHint=e?.requiredMissing?.length?`<p class="warn-text small"><b>Telas ausentes:</b> ${esc(e.requiredMissing.join(', '))}</p><p class="muted small">Sem as 6 telas obrigatórias, a análise da tática é bloqueada.</p>`:`<p class="muted small">No modo Tática, o app agora exige exatamente 6 telas obrigatórias. Se alguma faltar, ele bloqueará a análise.</p>`;
+   els.analysisResult.innerHTML=`<div class="result-card"><h3 class="danger-text">Não foi possível concluir</h3><p>${esc(e.message||e)}</p>${rigidHint}</div>`;
    setProgress(100,'Falha na análise');
  }finally{setTimeout(()=>els.analysisProgress.classList.add('hidden'),1500)}
+}
+
+function requiredTacticTypes(){
+ return [
+  {key:'match_overview',label:'1. Tela da partida'},
+  {key:'my_squad',label:'2. Meu elenco / força por setor'},
+  {key:'opponent_squad',label:'3. Elenco do adversário / força por setor'},
+  {key:'analyst_summary',label:'4. Analista — resumo'},
+  {key:'analyst_marking',label:'5. Analista — marcação e impedimento'},
+  {key:'analyst_formation',label:'6. Analista — formação'}
+ ];
+}
+function normText(s){return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')}
+function buildFrameClassification(text,frame,slot){
+ const t=normText(text),myName=normText(slot?.teamName),oppName=normText(slot?.opponent?.teamName),nick=normText(settings.userNick||''),l=frame?.layout||{};
+ const score={match_overview:0,my_squad:0,opponent_squad:0,analyst_summary:0,analyst_marking:0,analyst_formation:0};
+ if(t.includes('vs'))score.match_overview+=5;if(t.includes('arbitro'))score.match_overview+=6;if(t.includes('jornada'))score.match_overview+=4;if((l.dark||0)>.38)score.match_overview+=2;
+ const squadBase=(l.bottomWhite||0)>.32?5:0;if(squadBase){score.my_squad+=squadBase;score.opponent_squad+=squadBase}if(t.includes('posicao')||t.includes('objetivo')||t.includes('jogador')||t.includes('idade')||t.includes('valor')){score.my_squad+=2;score.opponent_squad+=2}
+ if(nick&&t.includes(nick)){score.my_squad+=12;score.opponent_squad-=8}if(myName&&t.includes(myName)){score.my_squad+=8;score.opponent_squad-=5}if(oppName&&t.includes(oppName)){score.opponent_squad+=10;score.my_squad-=4}
+ const analystLayout=(l.leftWhite||0)>.34?5:0;if(analystLayout){score.analyst_summary+=5;score.analyst_marking+=2;score.analyst_formation+=2}
+ if(t.includes('pelo que pude ver')||t.includes('tenho a certeza')||t.includes('nivel do estadio'))score.analyst_summary+=10;
+ if(t.includes('marcacao')||t.includes('fora-de-jogo')||t.includes('fora de jogo')||t.includes('homem-a-homem')||t.includes('a zona'))score.analyst_marking+=10;if((l.rightBlue||0)>.1)score.analyst_marking+=3;
+ if(t.includes('formacao:')||t.includes('formação:')||t.includes('suplentes')||t.includes('tatica'))score.analyst_formation+=10;if((l.rightGreen||0)>.12)score.analyst_formation+=4;
+ return score;
+}
+function selectRequiredTacticFrames(frames,ocr){
+ const slot=state.slots[selectedSlot-1]||{};const enriched=(ocr.frames||[]).map(o=>{const frame=frames[(o.frame||1)-1];return {...o,frame,scores:buildFrameClassification(o.text,frame,slot)}}).filter(x=>x.frame);
+ const result=[];const pick=(key,min=4,exclude=[])=>{const b=[...enriched].filter(x=>!exclude.includes(x.frame)).sort((a,b)=>(b.scores[key]||0)-(a.scores[key]||0))[0];return b&&(b.scores[key]||0)>=min?b:null};
+ const match=pick('match_overview',5),mine=pick('my_squad',5),opp=pick('opponent_squad',5,mine?[mine.frame]:[]),mark=pick('analyst_marking',6),form=pick('analyst_formation',6);
+ // O relatório textual pode estar na mesma captura de marcação ou formação; não exigimos um sexto quadro único.
+ let summary=pick('analyst_summary',6);if(!summary){const candidates=[mark,form].filter(Boolean).sort((a,b)=>(b.scores.analyst_summary||0)-(a.scores.analyst_summary||0));if(candidates[0]&&(candidates[0].scores.analyst_summary||0)>=5)summary=candidates[0]}
+ const map={match_overview:match,my_squad:mine,opponent_squad:opp,analyst_summary:summary,analyst_marking:mark,analyst_formation:form};
+ for(const need of requiredTacticTypes()){const b=map[need.key];result.push(b?{type:need.key,label:need.label,frame:b.frame,text:b.text,score:b.scores[need.key]}:{type:need.key,label:need.label,frame:null,text:null,score:0})}
+ ocr.required=result.reduce((a,x)=>{a[x.type]=x.text||null;return a},{});ocr.missingRequired=result.filter(x=>!x.frame).map(x=>x.label);return result;
+}
+function assertAllRequiredTacticScreens(items){
+ const missing=items.filter(x=>!x.frame).map(x=>x.label);
+ if(!missing.length)return items.filter(x=>x.frame).map(x=>x.frame);
+ const msg=`Faltaram ${missing.length} das 6 telas obrigatórias: ${missing.join(', ')}. Sem essas telas o app não gera tática. Grave novamente parando 1–2 segundos em cada tela obrigatória.`;
+ const err=new Error(msg);
+ err.requiredMissing=missing;
+ throw err;
+}
+function renderRequiredTacticPreview(items){
+ const any=items.some(x=>x.frame);
+ els.mediaPreview.innerHTML=`<div class="required-grid">${
+   items.map(item=>`<div class="required-card ${item.frame?'ok':'missing'}">${
+     item.frame?`<img src="${item.frame.dataUrl}" alt="${esc(item.label)}" />`:`<div class="required-missing">Faltou</div>`
+   }<div class="required-caption"><b>${esc(item.label)}</b><span>${item.frame?'detectada':'não detectada'}</span></div></div>`).join('')
+ }</div>`;
+ const missingCount=items.filter(x=>!x.frame).length;
+ if(any&&missingCount){els.mediaPreview.innerHTML+=`<div class="result-card rigid-note"><p class="warn-text"><b>Faltam ${missingCount} das 6 telas obrigatórias.</b></p><p class="muted small">A análise será bloqueada até todas serem detectadas.</p></div>`;}
+ if(!any) els.mediaPreview.innerHTML='<div class="result-card"><h3>Nenhuma das 6 telas obrigatórias foi detectada</h3><p class="muted">Sem elas, o app não gera tática.</p></div>';
 }
 
 async function extractVideoFramesFast(file,maxFrames=8){
@@ -177,9 +253,34 @@ function selectVisualEvidence(frames,n=2){
 }
 async function analyzeOcrPackage(ocr,evidence){
  const parts=[{text:hybridPrompt(ocr)}];
- for(const f of evidence)parts.push({text:`Imagem de apoio ~${Math.round(f.time||0)}s. Use apenas para conferir elementos visuais que o OCR não captura bem.`},{inlineData:{mimeType:f.mimeType,data:f.base64}});
+ for(let i=0;i<evidence.length;i++){
+   const f=evidence[i];
+   parts.push({text:`Imagem de apoio ${i+1}`},{inlineData:{mimeType:f.mimeType,data:f.base64}});
+ }
  return geminiJson(parts,{temperature:.03,maxOutputTokens:8500});
 }
+
+async function analyzeCalendarOcr(ocr,evidence){
+ const slot=state.slots[selectedSlot-1];
+ const parts=[{text:`Você é um extrator de CALENDÁRIO do OSM 26. Analise o OCR e as imagens do calendário do Slot ${selectedSlot}.
+Horário padrão cadastrado: ${slot.defaultMatchTime||'não informado'}.
+REGRAS: placar visível = já jogado (played=true); ícone de casa à esquerda = campeonato em Casa; partida de campeonato sem casa = Fora; ícone de taça/troféu = competitionType=\"cup\" e conditional=true enquanto depender de classificação. Extraia rodada, adversário, data e horário visíveis. Se faltar horário, use o horário padrão e marque timeSource=\"default\". Não invente.
+Retorne SOMENTE JSON: {\"matches\":[{\"round\":null,\"opponent\":null,\"competitionType\":\"league|cup|null\",\"venue\":\"Casa|Fora|null\",\"dateText\":null,\"timeText\":null,\"dateTime\":null,\"timeSource\":\"screen|default|null\",\"result\":null,\"played\":false,\"conditional\":false}]}
+OCR:\n${ocr.joined}`}];
+ for(const f of evidence)parts.push({inlineData:{mimeType:f.mimeType,data:f.base64}});
+ return geminiJson(parts,{temperature:.01,maxOutputTokens:6500});
+}
+function normalizeCalendarMatch(x){return {round:x.round??null,opponent:x.opponent??null,competitionType:x.competitionType||null,venue:x.venue||null,dateText:x.dateText||null,timeText:x.timeText||null,dateTime:x.dateTime||null,timeSource:x.timeSource||null,result:x.result||null,played:!!x.played,conditional:!!x.conditional,skipped:false}}
+function cupLossFromResult(r){if(!r)return false;const m=String(r).match(/(\d+)\s*[-x:]\s*(\d+)/i);return !!m&&Number(m[1])<Number(m[2])}
+function pruneConditionalCupMatches(s){let eliminated=false;for(const x of s.schedule||[]){if(x.competitionType!=='cup')continue;if(x.played&&cupLossFromResult(x.result)){eliminated=true;continue}if(eliminated&&!x.played){x.skipped=true;x.conditional=true}}}
+function applyCalendarResult(result){const s=state.slots[selectedSlot-1];s.schedule=(result.matches||[]).map(normalizeCalendarMatch);for(const x of s.schedule){if(x.played)continue;if(x.dateTime&&Number.isNaN(new Date(x.dateTime).getTime()))x.dateTime=null;if(!x.dateTime&&x.dateText){const d=parseCalendarDateTime(x.dateText,x.timeText||s.defaultMatchTime);if(d)x.dateTime=d.toISOString()}}pruneConditionalCupMatches(s);s.updatedAt=nowIso();ensureNextMatchFromScheduleOrDefault(s);saveState()}
+function parseCalendarDateTime(dateText,timeText){if(!dateText)return null;const raw=`${dateText} ${timeText||''}`.trim();let d=new Date(raw);if(!Number.isNaN(d.getTime()))return d;const m=String(dateText).match(/(\d{1,2})[\/.-](\d{1,2})(?:[\/.-](\d{2,4}))?/);if(!m)return null;let y=m[3]?Number(m[3]):new Date().getFullYear();if(y<100)y+=2000;const tm=String(timeText||'').match(/(\d{1,2}):(\d{2})/);d=new Date(y,Number(m[2])-1,Number(m[1]),tm?Number(tm[1]):12,tm?Number(tm[2]):0);return Number.isNaN(d.getTime())?null:d}
+function ensureNextMatchFromScheduleOrDefault(s){const now=Date.now();const next=(s.schedule||[]).filter(x=>!x.played&&!x.skipped&&x.dateTime&&new Date(x.dateTime).getTime()>now).sort((a,b)=>new Date(a.dateTime)-new Date(b.dateTime))[0];if(next){s.match.nextMatchAt=next.dateTime;s.match.venue=next.venue||s.match.venue;s.opponent.teamName=next.opponent||s.opponent.teamName;return}if(s.defaultMatchTime){const [h,m]=s.defaultMatchTime.split(':').map(Number);let d=new Date();d.setHours(h,m,0,0);if(d.getTime()<=now)d.setDate(d.getDate()+1);s.match.nextMatchAt=d.toISOString()}}
+function renderCalendarResult(result){const s=state.slots[selectedSlot-1],rows=s.schedule||[];els.coveragePanel.classList.add('hidden');els.analysisResult.innerHTML=`<div class=\"result-card\"><h3>Calendário · Slot ${selectedSlot}</h3>${rows.length?`<table class=\"simple-table\"><tr><th>Rod.</th><th>Tipo</th><th>Local</th><th>Adversário</th><th>Data/hora</th><th>Status</th></tr>${rows.map(x=>`<tr><td>${esc(x.round)}</td><td>${x.competitionType==='cup'?'🏆 Taça':'Liga'}</td><td>${esc(x.venue)}</td><td>${esc(x.opponent)}</td><td>${esc(x.dateTime?fmtDateTime(x.dateTime):(x.dateText||'NI')+' '+(x.timeText||''))}</td><td>${x.played?'Jogado '+esc(x.result||''):x.skipped?'Ignorado (eliminado)':x.conditional?'Condicional':'Futuro'}</td></tr>`).join('')}</table>`:'<p class=\"warn-text\">Nenhuma partida foi identificada.</p>'}<p class=\"muted small\">Horário padrão: ${esc(s.defaultMatchTime||'NI')} · Próximo alerta: ${esc(s.match.nextMatchAt?fmtDateTime(s.match.nextMatchAt):'NI')}</p></div>`}
+
+async function analyzeResultOcr(ocr,evidence){const s=state.slots[selectedSlot-1];const parts=[{text:`Você é um extrator de RESULTADO do OSM 26. Use OCR e imagens. Contexto pré-jogo: ${JSON.stringify({team:s.teamName,opponent:s.opponent?.teamName,tactic:s.tactic,myOverall:s.myTeam?.overall,oppOverall:s.opponent?.overall,venue:s.match?.venue})}. Extraia placar final, formação final dos dois times, remates/chutes, posse, cantos, faltas, cartões amarelos e vermelhos de CADA TIME (ícone + número, inclusive zero), gols, cartões e substituições quando legíveis. Não invente. Retorne JSON: {\"teamName\":null,\"opponent\":null,\"gf\":null,\"ga\":null,\"score\":null,\"myFormation\":null,\"oppFormation\":null,\"stats\":{\"myShots\":null,\"oppShots\":null,\"myPossession\":null,\"oppPossession\":null,\"myCorners\":null,\"oppCorners\":null,\"myFouls\":null,\"oppFouls\":null,\"myYellowCards\":null,\"oppYellowCards\":null,\"myRedCards\":null,\"oppRedCards\":null},\"events\":[],\"confidence\":0.0}. OCR:\n${ocr.joined}`}];for(const f of evidence)parts.push({inlineData:{mimeType:f.mimeType,data:f.base64}});return geminiJson(parts,{temperature:.01,maxOutputTokens:7000})}
+function applyResultVideo(r){const s=state.slots[selectedSlot-1],gf=Number(r.gf),ga=Number(r.ga);if(!Number.isFinite(gf)||!Number.isFinite(ga))throw new Error('Não consegui identificar o placar final no vídeo.');const entry={createdAt:nowIso(),opponent:r.opponent||s.opponent.teamName,gf,ga,score:r.score||`${gf}-${ga}`,note:'Resultado extraído por vídeo',tactic:s.tactic?structuredClone(s.tactic):null,stats:r.stats||{},events:r.events||[],context:{myOverall:s.myTeam.overall,oppOverall:s.opponent.overall,oppFormation:r.oppFormation||s.opponent.formation,myFormation:r.myFormation||s.tactic?.formation||null,oppStyle:s.opponent.style,oppMarking:s.opponent.marking,oppOffside:s.opponent.offside,opponentHuman:s.opponent.human,venue:s.match.venue,referee:s.match.refereeColor||s.match.refereeName,trainingCamp:s.opponent.trainingCamp,secretTraining:s.opponent.secretTraining,strengthBucket:strengthBucket(s),yellowCards:r.stats?.myYellowCards??null,redCards:r.stats?.myRedCards??null,oppYellowCards:r.stats?.oppYellowCards??null,oppRedCards:r.stats?.oppRedCards??null}};s.results=s.results||[];s.results.push(entry);const pending=(s.schedule||[]).filter(x=>!x.played&&!x.skipped).sort((a,b)=>new Date(a.dateTime||'9999')-new Date(b.dateTime||'9999'))[0];if(pending){pending.played=true;pending.result=entry.score;if(pending.competitionType==='cup'&&gf<ga)pruneConditionalCupMatches(s)}s.tactic=null;s.tacticNeedsRefresh=true;if(Number.isFinite(Number(s.round)))s.round=Number(s.round)+1;s.updatedAt=nowIso();ensureNextMatchFromScheduleOrDefault(s);saveState()}
+function renderResultVideo(r){const st=r.stats||{};els.coveragePanel.classList.add('hidden');els.analysisResult.innerHTML=`<div class=\"result-card\"><h3>Resultado registrado · Slot ${selectedSlot}</h3><div class=\"data-grid\"><div class=\"data-cell\"><span>Placar</span><b>${esc(r.score||`${r.gf}-${r.ga}`)}</b></div><div class=\"data-cell\"><span>Formações</span><b>${esc(r.myFormation)} × ${esc(r.oppFormation)}</b></div><div class=\"data-cell\"><span>Posse</span><b>${esc(st.myPossession)} × ${esc(st.oppPossession)}</b></div><div class=\"data-cell\"><span>Remates</span><b>${esc(st.myShots)} × ${esc(st.oppShots)}</b></div><div class=\"data-cell\"><span>Faltas</span><b>${esc(st.myFouls)} × ${esc(st.oppFouls)}</b></div><div class=\"data-cell\"><span>🟨</span><b>${esc(st.myYellowCards)} × ${esc(st.oppYellowCards)}</b></div><div class=\"data-cell\"><span>🟥</span><b>${esc(st.myRedCards)} × ${esc(st.oppRedCards)}</b></div></div><p class=\"good-text small\">Salvo no histórico e no aprendizado.</p></div>`}
 
 function renderVideoPreview(file){
   const url=URL.createObjectURL(file);
@@ -269,22 +370,12 @@ function loadImage(src){return new Promise((res,rej)=>{const i=new Image();i.onl
 async function extractVideoFrames(file){const url=URL.createObjectURL(file);const v=document.createElement('video');v.src=url;v.muted=true;v.playsInline=true;v.preload='metadata';await new Promise((res,rej)=>{v.onloadedmetadata=res;v.onerror=()=>rej(new Error(`Não consegui abrir ${file.name}`))});const dur=Math.max(.1,v.duration||1);const maxCandidates=54;const step=Math.max(.7,dur/maxCandidates);const out=[];let prev=null;let i=0;for(let t=.08;t<dur;t+=step){await seekVideo(v,Math.min(t,dur-.05));const frame=captureVideoFrame(v,t,file.name);const thumb=frame.thumb;const diff=prev?pixelDiff(prev,thumb):100;prev=thumb;if(diff>=6||i%5===0||t+step>=dur){frame.score=diff;out.push(frame)}i++;if(i>maxCandidates+4)break}URL.revokeObjectURL(url);return out}
 function seekVideo(v,t){return new Promise(res=>{let done=false;const finish=()=>{if(done)return;done=true;v.removeEventListener('seeked',finish);res()};v.addEventListener('seeked',finish,{once:true});v.currentTime=t;setTimeout(finish,900)})}
 function captureVideoFrame(v,t,name){
- const maxW=1280,scale=Math.min(1,maxW/(v.videoWidth||maxW));
- const w=Math.max(320,Math.round((v.videoWidth||1280)*scale)),h=Math.max(180,Math.round((v.videoHeight||720)*scale));
- const c=document.createElement('canvas');c.width=w;c.height=h;const x=c.getContext('2d');x.drawImage(v,0,0,w,h);
- const dataUrl=c.toDataURL('image/jpeg',.8);
- const tc=document.createElement('canvas');tc.width=80;tc.height=45;const tx=tc.getContext('2d');tx.drawImage(v,0,0,80,45);
- const data=tx.getImageData(0,0,80,45).data;
- const thumb=new Uint8Array(80*45),hist=new Uint16Array(16);
- let bright=0,sat=0;
- for(let i=0,j=0;i<data.length;i+=4,j++){
-   const r=data[i],g=data[i+1],b=data[i+2],gray=Math.round((r+g+b)/3);
-   thumb[j]=gray;hist[Math.min(15,Math.floor(gray/16))]++;bright+=gray;
-   const mx=Math.max(r,g,b),mn=Math.min(r,g,b);sat+=mx-mn;
- }
- const count=80*45;
- return {dataUrl,base64:dataUrl.split(',')[1],mimeType:'image/jpeg',time:t,name,thumb,hist,
-   brightness:bright/count,saturation:sat/count,score:0};
+ const maxW=1280,scale=Math.min(1,maxW/(v.videoWidth||maxW));const w=Math.max(320,Math.round((v.videoWidth||1280)*scale)),h=Math.max(180,Math.round((v.videoHeight||720)*scale));
+ const c=document.createElement('canvas');c.width=w;c.height=h;const x=c.getContext('2d');x.drawImage(v,0,0,w,h);const dataUrl=c.toDataURL('image/jpeg',.82);
+ const tw=96,th=54,tc=document.createElement('canvas');tc.width=tw;tc.height=th;const tx=tc.getContext('2d');tx.drawImage(v,0,0,tw,th);const data=tx.getImageData(0,0,tw,th).data;
+ const thumb=new Uint8Array(tw*th),hist=new Uint16Array(16);let bright=0,sat=0,leftWhite=0,leftN=0,bottomWhite=0,bottomN=0,rightBlue=0,rightGreen=0,rightN=0,dark=0;
+ for(let py=0;py<th;py++)for(let px=0;px<tw;px++){const j=py*tw+px,i=j*4,r=data[i],g=data[i+1],b=data[i+2],gray=Math.round((r+g+b)/3);thumb[j]=gray;hist[Math.min(15,Math.floor(gray/16))]++;bright+=gray;const mx=Math.max(r,g,b),mn=Math.min(r,g,b);sat+=mx-mn;if(gray<75)dark++;if(px<tw*.42){leftN++;if(r>190&&g>190&&b>190)leftWhite++}if(py>th*.48){bottomN++;if(r>185&&g>185&&b>185)bottomWhite++}if(px>tw*.42){rightN++;if(b>115&&b>r*1.18&&b>g*.92)rightBlue++;if(g>95&&g>r*1.18&&g>b*.82)rightGreen++;}}
+ const count=tw*th;return {dataUrl,base64:dataUrl.split(',')[1],mimeType:'image/jpeg',time:t,name,thumb,hist,brightness:bright/count,saturation:sat/count,score:0,layout:{leftWhite:leftN?leftWhite/leftN:0,bottomWhite:bottomN?bottomWhite/bottomN:0,rightBlue:rightN?rightBlue/rightN:0,rightGreen:rightN?rightGreen/rightN:0,dark:dark/count}};
 }
 function canvasFrameFromImage(img,t,name){const maxW=1280,scale=Math.min(1,maxW/img.naturalWidth);const w=Math.round(img.naturalWidth*scale),h=Math.round(img.naturalHeight*scale);const c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').drawImage(img,0,0,w,h);const dataUrl=c.toDataURL('image/jpeg',.8);return {dataUrl,base64:dataUrl.split(',')[1],mimeType:'image/jpeg',time:t,name,score:100}}
 function pixelDiff(a,b){if(!a||!b||a.length!==b.length)return 100;let s=0;for(let i=0;i<a.length;i++)s+=Math.abs(a[i]-b[i]);return s/a.length}
@@ -340,31 +431,45 @@ function hybridPrompt(ocr){
  const target=els.slotTarget.value;
  const slotHint=target==='auto'?'detectar pelo conteúdo':`usar Slot ${target}`;
  const baseKnown=target!=='auto'&&state.slots[Number(target)-1]?state.slots[Number(target)-1]:null;
- if(analysisMode==='tactic')return `Você é um especialista em OSM 26. O navegador já executou OCR LOCAL no vídeo. Portanto, não precisa reler o vídeo inteiro. Use o TEXTO OCR abaixo como fonte principal e as poucas imagens anexadas apenas para confirmar itens visuais.
+ if(analysisMode==='tactic')return `Você é um especialista em OSM 26. O navegador já executou OCR LOCAL e separou exatamente as 6 telas obrigatórias para decidir a tática.
 
-DESTINO: ${slotHint}.
-DADOS JÁ SALVOS NO SLOT (podem estar desatualizados; preserve apenas o que não for contradito pelo OCR): ${JSON.stringify(baseKnown?{
-teamName:baseKnown.teamName,competitionName:baseKnown.competitionName,competitionType:baseKnown.competitionType,round:baseKnown.round,totalRounds:baseKnown.totalRounds
-}:null)}
+DESTINO: ${slotHint}
 
-TEXTO OCR DO VÍDEO:
+AS 6 TELAS OBRIGATÓRIAS:
+1) Tela da partida
+2) Meu elenco / força por setor
+3) Elenco do adversário / força por setor
+4) Analista — resumo
+5) Analista — marcação e impedimento
+6) Analista — formação
+
+SEPARAÇÃO FEITA PELO APP:
+${JSON.stringify(ocr.required||{},null,2)}
+
+TELAS AUSENTES:
+${JSON.stringify(ocr.missingRequired||[])}
+
+OCR COMPLETO DE APOIO:
 ${ocr.joined}
 
+DADOS JÁ SALVOS DO SLOT (use apenas como apoio quando não contradizer o OCR):
+${JSON.stringify(baseKnown?{
+ teamName:baseKnown.teamName,competitionName:baseKnown.competitionName,competitionType:baseKnown.competitionType,
+ round:baseKnown.round,totalRounds:baseKnown.totalRounds,myTeam:baseKnown.myTeam,opponent:baseKnown.opponent,match:baseKnown.match
+}:null)}
+
 TAREFA:
-1. Estruture os dados da partida sem inventar nada.
-2. Identifique meu time/rival, força geral, GOL/DEF/MEI/ATA quando visível, casa/fora, árbitro, humano/CPU, bônus, CT/treino secreto, estádio e horário.
-3. Do Data Analyst rival, extraia formação, estilo/plano, marcação e impedimento.
-4. Se o OCR contiver termos como Analista, Data Analyst, formação, marcação, fora de jogo/impedimento ou plano, trate esses trechos como prioridade máxima e não os descarte.
-5. Gere UMA tática final completa visando maximizar a chance de vitória.
-6. Se um dado não está claro no OCR nem nas imagens, use null.
-7. Não confunda a minha tática atual com a tática do rival.
-8. sliders pressure, mentality e tempo: inteiros 0–100.
-9. Considere também o histórico aprendido do slot, fornecido abaixo:
-${JSON.stringify(baseKnown?buildLearningSummary(baseKnown):null)}
+- Use prioritariamente as 6 telas separadas acima.
+- Não invente nada.
+- Se uma tela obrigatória não foi detectada, liste isso em "missing".
+- Extraia: meu time, adversário, competição, rodada, casa/fora, árbitro, força geral dos dois times, GOL/DEF/MEI/ATA dos dois times quando visível, estádio, humano/CPU, bônus, CT/treino secreto.
+- Do Data Analyst rival, extraia obrigatoriamente: formação, estilo/plano, marcação e impedimento.
+- Gere UMA tática final completa: formation, gamePlan, pressure, mentality, tempo, marking, offside, tackling, attackInstruction, midfieldInstruction, defenceInstruction.
+- Não confunda a minha tática com a do rival.
+- Use números inteiros 0–100 nos sliders.
 
 RETORNE APENAS JSON:
-{"captures":[{"slotNumber":1,"confidence":0.0,"screensSeen":[],"teamName":null,"competitionName":null,"competitionType":null,"round":null,"totalRounds":null,"myTeam":{"overall":null,"goalkeeper":null,"defence":null,"midfield":null,"attack":null,"squadValue":null,"playerCount":null,"stadium":null,"loginBonus":null,"secretTraining":null,"trainingCamp":null},"opponent":{"teamName":null,"human":null,"manager":null,"overall":null,"goalkeeper":null,"defence":null,"midfield":null,"attack":null,"squadValue":null,"playerCount":null,"stadium":null,"loginBonus":null,"secretTraining":null,"trainingCamp":null,"formation":null,"style":null,"marking":null,"offside":null,"tackling":null},"match":{"venue":null,"refereeName":null,"refereeColor":null,"exactDateTimeText":null,"countdownText":null},"roster":[],"market":[],"result":{},"missing":[],"recommendedTactic":{"formation":"","gamePlan":"","pressure":0,"mentality":0,"tempo":0,"marking":"À zona","offside":"Não","tackling":"Normal","attackInstruction":"","midfieldInstruction":"","defenceInstruction":"","confidence":"média","reason":""}}]}`;
-
+{"captures":[{"slotNumber":1,"confidence":0.0,"screensSeen":["match_overview","my_squad","opponent_squad","analyst_summary","analyst_marking","analyst_formation"],"teamName":null,"competitionName":null,"competitionType":null,"round":null,"totalRounds":null,"myTeam":{"overall":null,"goalkeeper":null,"defence":null,"midfield":null,"attack":null,"squadValue":null,"playerCount":null,"stadium":null,"loginBonus":null,"secretTraining":null,"trainingCamp":null},"opponent":{"teamName":null,"human":null,"manager":null,"overall":null,"goalkeeper":null,"defence":null,"midfield":null,"attack":null,"squadValue":null,"playerCount":null,"stadium":null,"loginBonus":null,"secretTraining":null,"trainingCamp":null,"formation":null,"style":null,"marking":null,"offside":null,"tackling":null},"match":{"venue":null,"refereeName":null,"refereeColor":null,"exactDateTimeText":null,"countdownText":null},"roster":[],"market":[],"result":{},"missing":[],"recommendedTactic":{"formation":"","gamePlan":"","pressure":0,"mentality":0,"tempo":0,"marking":"À zona","offside":"Não","tackling":"Normal","attackInstruction":"","midfieldInstruction":"","defenceInstruction":"","confidence":"média","reason":""}}]}`;
  return `Você é um especialista em mercado/evolução de elenco no OSM 26. O navegador já rodou OCR LOCAL no vídeo. Use o texto OCR como fonte principal e as poucas imagens apenas para confirmar ícones.
 
 DESTINO: ${slotHint}
@@ -554,7 +659,7 @@ function manualTacticModal(n){const s=state.slots[n-1]||defaultSlot(n),t=s.tacti
 function saveManualTactic(n){const s=state.slots[n-1];s.tactic={formation:document.getElementById('mtFormation').value,gamePlan:document.getElementById('mtPlan').value,pressure:clampInt(document.getElementById('mtPressure').value),mentality:clampInt(document.getElementById('mtMentality').value),tempo:clampInt(document.getElementById('mtTempo').value),marking:document.getElementById('mtMarking').value,offside:document.getElementById('mtOffside').value,tackling:document.getElementById('mtTackling').value,attackInstruction:document.getElementById('mtAttack').value.trim(),midfieldInstruction:document.getElementById('mtMid').value.trim(),defenceInstruction:document.getElementById('mtDef').value.trim(),confidence:'manual',reason:'Tática digitada manualmente a partir do OSM.',generatedAt:nowIso(),engine:'Manual'};s.updatedAt=nowIso();saveState();closeModal();toast('Tática usada salva')}
 
 function resultModal(n){const s=state.slots[n-1];openModal(`<h2>Resultado · Slot ${n}</h2><p class="muted">${esc(s.teamName)} × ${esc(s.opponent.teamName)}</p><div class="form-card"><div class="data-grid"><label>Meus gols<input id="resGF" type="number" min="0"></label><label>Gols rival<input id="resGA" type="number" min="0"></label></div><label>Observação opcional<input id="resNote" placeholder="Ex.: rival mudou para 4-5-1"></label><button class="btn" onclick="saveResult(${n})">Salvar resultado</button></div>`)}
-function saveResult(n){const gf=Number(document.getElementById('resGF').value),ga=Number(document.getElementById('resGA').value);if(!Number.isFinite(gf)||!Number.isFinite(ga)){toast('Informe o placar');return}const s=state.slots[n-1];s.results=s.results||[];s.results.push({createdAt:nowIso(),opponent:s.opponent.teamName,gf,ga,score:`${gf}-${ga}`,note:document.getElementById('resNote').value.trim()||null,tactic:s.tactic?structuredClone(s.tactic):null,context:{myOverall:s.myTeam.overall,oppOverall:s.opponent.overall,oppFormation:s.opponent.formation,oppStyle:s.opponent.style,oppMarking:s.opponent.marking,oppOffside:s.opponent.offside,opponentHuman:s.opponent.human,venue:s.match.venue,referee:s.match.refereeColor||s.match.refereeName,trainingCamp:s.opponent.trainingCamp,secretTraining:s.opponent.secretTraining,strengthBucket:strengthBucket(s)}});s.tactic=null;if(Number.isFinite(Number(s.round)))s.round=Number(s.round)+1;s.updatedAt=nowIso();saveState();closeModal();toast('Resultado salvo. O histórico foi incorporado ao aprendizado do Slot '+n+'.')}
+function saveResult(n){const gf=Number(document.getElementById('resGF').value),ga=Number(document.getElementById('resGA').value);if(!Number.isFinite(gf)||!Number.isFinite(ga)){toast('Informe o placar');return}const s=state.slots[n-1];s.results=s.results||[];s.results.push({createdAt:nowIso(),opponent:s.opponent.teamName,gf,ga,score:`${gf}-${ga}`,note:document.getElementById('resNote').value.trim()||null,tactic:s.tactic?structuredClone(s.tactic):null,context:{myOverall:s.myTeam.overall,oppOverall:s.opponent.overall,oppFormation:s.opponent.formation,oppStyle:s.opponent.style,oppMarking:s.opponent.marking,oppOffside:s.opponent.offside,opponentHuman:s.opponent.human,venue:s.match.venue,referee:s.match.refereeColor||s.match.refereeName,trainingCamp:s.opponent.trainingCamp,secretTraining:s.opponent.secretTraining,strengthBucket:strengthBucket(s)}});s.tactic=null;if(Number.isFinite(Number(s.round)))s.round=Number(s.round)+1;s.updatedAt=nowIso();if(s.schedule?.length){const next=s.schedule.find(x=>!x.played&&x.dateTime&&new Date(x.dateTime).getTime()>Date.now());if(next)s.match.nextMatchAt=next.dateTime;else ensureNextMatchFromScheduleOrDefault(s)}else if(s.defaultMatchTime){const d=new Date(s.match.nextMatchAt||Date.now());d.setDate(d.getDate()+1);const [hh,mm]=s.defaultMatchTime.split(':').map(Number);d.setHours(hh,mm,0,0);s.match.nextMatchAt=d.toISOString()}saveState();closeModal();toast('Resultado salvo. O histórico foi incorporado ao aprendizado do Slot '+n+'.')}
 
 function scheduleModal(n){const s=state.slots[n-1];let local='';if(s.match.nextMatchAt){const d=new Date(s.match.nextMatchAt);const off=d.getTimezoneOffset()*60000;local=new Date(d.getTime()-off).toISOString().slice(0,16)}openModal(`<h2>Horário · Slot ${n}</h2><div class="form-card"><label>Próxima partida<input id="scheduleAt" type="datetime-local" value="${esc(local)}"></label><button class="btn" onclick="saveSchedule(${n})">Salvar horário</button>${s.match.nextMatchAt?`<button class="btn secondary" onclick="downloadIcs(${n})">Adicionar ao calendário (alerta ${settings.notifyMinutes} min antes)</button>`:''}</div>`)}
 function saveSchedule(n){const v=document.getElementById('scheduleAt').value;if(!v)return;state.slots[n-1].match.nextMatchAt=new Date(v).toISOString();state.slots[n-1].updatedAt=nowIso();saveState();closeModal();toast('Horário salvo')}
@@ -750,43 +855,17 @@ function saveManualTactic(n){
  s.tacticFreshAt=nowIso();s.tacticNeedsRefresh=false;s.updatedAt=nowIso();saveState();closeModal();toast('Tática atualizada');
 }
 
-async function extractVideoFramesFast(file,maxFrames=14){
- const url=URL.createObjectURL(file),v=document.createElement('video');
- v.src=url;v.muted=true;v.playsInline=true;v.preload='metadata';
- await new Promise((res,rej)=>{v.onloadedmetadata=res;v.onerror=()=>rej(new Error(`Não consegui abrir ${file.name}`))});
- const dur=Math.max(.2,v.duration||1);
- // Varredura densa: importante para não perder telas curtas do Data Analyst.
- const step=dur<=20?.45:dur<=45?.65:.85;
- const candidates=[];let prev=null;
- for(let t=.08;t<dur;t+=step){
-   await seekVideo(v,Math.min(t,dur-.05));
-   const f=captureVideoFrame(v,t,file.name);
-   f.score=prev?frameDistance(f,prev):100;
-   candidates.push(f);prev=f;
-   if(candidates.length>120)break;
- }
- URL.revokeObjectURL(url);
-
- // Criar cenas por mudança visual. Guarda o quadro central + o mais "relatório" de cada cena.
- const scenes=[];let current=[];
- for(const f of candidates){
-   if(!current.length){current=[f];continue}
-   const d=frameDistance(f,current[current.length-1]);
-   if(d>=10){
-     scenes.push(current);current=[f];
-   }else current.push(f);
- }
- if(current.length)scenes.push(current);
-
- const reps=[];
- for(const scene of scenes){
-   const mid=scene[Math.floor(scene.length/2)];
-   const report=[...scene].sort((a,b)=>scenePriority(b)-scenePriority(a))[0];
-   reps.push(mid);
-   if(report!==mid && frameDistance(mid,report)>=5)reps.push(report);
- }
- const limit=analysisMode==='market'?Math.max(18,maxFrames):Math.max(16,maxFrames);
- return chooseDiverseFrames(reps,limit);
+async function extractVideoFramesFast(file,maxFrames=18){
+ const url=URL.createObjectURL(file),v=document.createElement('video');v.src=url;v.muted=true;v.playsInline=true;v.preload='metadata';await new Promise((res,rej)=>{v.onloadedmetadata=res;v.onerror=()=>rej(new Error(`Não consegui abrir ${file.name}`))});
+ const dur=Math.max(.2,v.duration||1),step=dur<=25?.28:dur<=60?.4:.55,candidates=[];let prev=null;
+ for(let t=.06;t<dur;t+=step){await seekVideo(v,Math.min(t,dur-.04));const f=captureVideoFrame(v,t,file.name);f.score=prev?frameDistance(f,prev):100;candidates.push(f);prev=f;if(candidates.length>180)break}URL.revokeObjectURL(url);
+ if(analysisMode==='market'||analysisMode==='calendar')return chooseDiverseFrames(candidates,Math.min(22,maxFrames));
+ const analyst=candidates.filter(f=>(f.layout?.leftWhite||0)>.34 && ((f.layout?.rightBlue||0)>.08||(f.layout?.rightGreen||0)>.08));
+ const squad=candidates.filter(f=>(f.layout?.bottomWhite||0)>.36 && (f.layout?.leftWhite||0)<.3);
+ const match=candidates.filter(f=>(f.layout?.dark||0)>.38 && (f.layout?.bottomWhite||0)<.25);
+ const chosen=[];const add=(arr,n)=>{for(const f of chooseDiverseFrames(arr,n)){if(!chosen.includes(f))chosen.push(f)}};
+ add(analyst,7);add(squad,5);add(match,3);add(candidates,4);
+ return chooseDiverseFrames(chosen,Math.min(18,maxFrames));
 }
 async function prepareOcrImage(dataUrl){
  const img=await loadImage(dataUrl);
@@ -851,5 +930,7 @@ function checkNotifications(){
  if(changed){localStorage.setItem(STATE_KEY,JSON.stringify(state));renderToday()}
 }
 
-Object.assign(window,{showView,setSelectedSlot,prepareReanalysis,configureSlot,saveSlotConfig,finishCompetition,confirmFinish,slotDetailModal,generateTacticForSlot,tacticModal,manualTacticModal,saveManualTactic,resultModal,saveResult,scheduleModal,saveSchedule,downloadIcs,aiMarketPlan,marketPlanModal,saveApiKey,clearApiKey,closeModal});
+
+function renderAnalysisMode(){if(!els.analysisGuide)return;const tactic=analysisMode==='tactic',market=analysisMode==='market',calendar=analysisMode==='calendar',result=analysisMode==='result';els.uploadTitle.textContent=tactic?'Enviar vídeo da partida':market?'Enviar vídeo do mercado':calendar?'Enviar vídeo do calendário':'Enviar vídeo do resultado';els.uploadHelp.textContent=tactic?'O app exige as 6 categorias obrigatórias.':market?'Grave elenco, treinamento e transferências.':calendar?'Placar=jogado; 🏠=liga em casa; sem casa=liga fora; 🏆=taça.':'Grave todo o resultado: placar, estatísticas, cartões, formações e eventos.';els.autoTacticRow.classList.toggle('hidden',!tactic);if(tactic)els.analysisGuide.innerHTML=`<h3>Obrigatório para gerar tática</h3><p class=\"warn-text small\"><b>Sem todas as 6 categorias, não gera.</b></p>`;else if(market)els.analysisGuide.innerHTML=`<h3>Mercado / Evolução</h3><p>Elenco, treinamento e lista de transferências.</p>`;else if(calendar)els.analysisGuide.innerHTML=`<h3>Calendário</h3><div class=\"guide-grid\"><div><b>Placar</b><span>já jogado</span></div><div><b>🏠 Casa</b><span>liga em casa</span></div><div><b>Sem casa</b><span>liga fora</span></div><div><b>🏆 Taça</b><span>condicional; elimina datas futuras se perder</span></div><div><b>Horário</b><span>manual/padrão quando não estiver visível</span></div></div>`;else els.analysisGuide.innerHTML=`<h3>Resultado para aprendizado</h3><div class=\"guide-grid\"><div><b>Placar</b></div><div><b>Posse/remates/cantos/faltas</b></div><div><b>🟨 / 🟥</b><span>quantidade por time</span></div><div><b>Formações</b></div><div><b>Eventos</b><span>gols, cartões, substituições</span></div></div>`;}
+Object.assign(window,{showView,setSelectedSlot,prepareReanalysis,configureSlot,saveSlotConfig,openCalendarForSlot,finishCompetition,confirmFinish,slotDetailModal,generateTacticForSlot,tacticModal,manualTacticModal,saveManualTactic,resultModal,saveResult,scheduleModal,saveSchedule,downloadIcs,aiMarketPlan,marketPlanModal,saveApiKey,clearApiKey,closeModal});
 document.addEventListener('DOMContentLoaded',init);
