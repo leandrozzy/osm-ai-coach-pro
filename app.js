@@ -1264,5 +1264,298 @@ function frameLimitForMode(mode){return mode==='tactic'?12:mode==='calendar'?6:m
 function evidenceLimitForMode(mode){return mode==='tactic'?6:mode==='calendar'?4:mode==='result'?5:3}
 async function runLocalOcr(frames){if(!window.Tesseract)throw new Error('OCR local não carregou. Recarregue a página e tente novamente.');const results=[];let worker=null;try{worker=await Tesseract.createWorker('por+eng',1,{logger:m=>{if(m.status==='recognizing text'&&m.progress)setProgress(20+Math.round(m.progress*28),`OCR local ${Math.round(m.progress*100)}%…`)}})}catch{worker=await Tesseract.createWorker('eng',1)}try{for(let i=0;i<frames.length;i++){setProgress(22+Math.round((i/Math.max(1,frames.length))*28),`OCR ${i+1}/${frames.length}…`);const {data}=await worker.recognize(frames[i].dataUrl);const text=cleanOcrText(data?.text||'');if(text.length>4)results.push({frame:i+1,time:Math.round(frames[i].time||0),text,confidence:data?.confidence??null})}}finally{if(worker)await worker.terminate()}return {mode:analysisMode,frames:results,joined:results.map(x=>`[Quadro ${x.frame} ~${x.time}s]\n${x.text}`).join('\n\n')}}
 async function handleFiles(files){if(!files.length)return;if(!localStorage.getItem(API_KEY_STORAGE)){apiModal('Antes de analisar, salve sua chave Gemini.');return}if(ocrJobBusy){toast('Já existe uma leitura em andamento. Aguarde terminar.');return}const jobMode=analysisMode,jobSlot=selectedSlot;ocrJobBusy=true;await acquireOcrWakeLock();clearAnalysisUi();els.analysisProgress.classList.remove('hidden');try{const video=files.find(f=>f.type.startsWith('video/')),images=files.filter(f=>f.type.startsWith('image/'));let frames=[];if(video){renderVideoPreview(video);setProgress(6,'Selecionando poucos quadros úteis…');frames=await extractVideoFramesFast(video,frameLimitForMode(jobMode))}else if(images.length){for(const f of images.slice(0,frameLimitForMode(jobMode)))frames.push(await imageFileToFrame(f))}else throw new Error('Selecione um vídeo ou imagens do OSM.');setProgress(18,`OCR local em ${frames.length} quadros…`);const ocr=await runLocalOcr(frames);let result;if(jobMode==='tactic'){const selected=selectRequiredTacticFrames(frames,ocr);renderRequiredTacticPreview(selected);const requiredFrames=assertAllRequiredTacticScreens(selected);setProgress(58,'Enviando as telas obrigatórias para a IA…');result=await analyzeOcrPackage(ocr,requiredFrames);applyVisionResult(result);applyRecommendedTactics(result);renderAnalysisResult(result)}else if(jobMode==='calendar'){const evidence=selectVisualEvidence(frames,evidenceLimitForMode(jobMode));renderFramePreview(evidence);setProgress(58,'Lendo casa/fora, taça e V/D/E…');result=await analyzeCalendarOcr(ocr,evidence);applyCalendarResult(result);renderCalendarResult(result)}else if(jobMode==='result'){const evidence=selectVisualEvidence(frames,evidenceLimitForMode(jobMode));renderFramePreview(evidence);setProgress(58,'Lendo resultado e cartões…');result=await analyzeResultOcr(ocr,evidence);applyResultVideo(result);renderResultVideo(result)}else{const evidence=selectVisualEvidence(frames,evidenceLimitForMode(jobMode));renderFramePreview(evidence);setProgress(58,'Lendo elenco e posições…');result=await analyzeOcrPackage(ocr,evidence);applyVisionResult(result);const ss=state.slots[jobSlot-1];ss.lastRosterSnapshotAt=nowIso();recalculateSquadValue(ss);ss.market=[];renderAnalysisResult(result)}state.lastAnalysisAt=nowIso();saveState();setProgress(100,'Concluído');toast(jobMode==='calendar'?'Calendário atualizado':jobMode==='result'?'Resultado registrado':jobMode==='market'?'Elenco atualizado':'Tática gerada')}catch(e){console.error(e);els.analysisResult.innerHTML=`<div class="result-card"><h3 class="danger-text">Não foi possível concluir</h3><p>${esc(e.message||e)}</p></div>`;setProgress(100,'Falha na análise')}finally{ocrJobBusy=false;await releaseOcrWakeLock();setTimeout(()=>els.analysisProgress.classList.add('hidden'),1200)}}
-Object.assign(window,{showView,setSelectedSlot,prepareReanalysis,configureSlot,saveSlotConfigV5,openCalendarForSlot,finishCompetition,confirmFinish,slotDetailModal,generateTacticForSlot,tacticModal,manualTacticModal,saveManualTactic,strong433Modal,generateStrong433,resultModal,saveResultV52,runSetupStep,scheduleModal,saveSchedule,downloadIcs,openMarketSnapshot,aiStrategyReview,strategyModal,renderInfo,updateEventIntel,rosterTransactionModal,saveRosterTransaction,saveVideoResultPosition,saveApiKey,clearApiKey,closeModal});
+
+// ===== v5.4: estabilidade de processamento, calendário ancorado e UI persistente =====
+const analysisUiCacheV54={};
+let activeAnalysisJobV54=null;
+let analysisTargetOverrideV54=null;
+
+function analysisCacheKeyV54(slot=selectedSlot,mode=analysisMode){return `${slot}:${mode}`}
+function cacheAnalysisUiV54(slot=selectedSlot,mode=analysisMode){
+ const key=analysisCacheKeyV54(slot,mode);
+ analysisUiCacheV54[key]={
+  preview:els.mediaPreview?.innerHTML||'',
+  coverage:els.coveragePanel?.innerHTML||'',
+  coverageHidden:els.coveragePanel?.classList.contains('hidden')!==false,
+  result:els.analysisResult?.innerHTML||'',
+  progress:els.progressBar?.style.width||'0%',
+  progressText:els.progressText?.textContent||'',
+  progressHidden:els.analysisProgress?.classList.contains('hidden')!==false
+ };
+}
+function restoreAnalysisUiV54(slot=selectedSlot,mode=analysisMode){
+ const c=analysisUiCacheV54[analysisCacheKeyV54(slot,mode)];
+ if(c){
+  if(els.mediaPreview)els.mediaPreview.innerHTML=c.preview;
+  if(els.coveragePanel){els.coveragePanel.innerHTML=c.coverage;els.coveragePanel.classList.toggle('hidden',c.coverageHidden)}
+  if(els.analysisResult)els.analysisResult.innerHTML=c.result;
+  if(els.progressBar)els.progressBar.style.width=c.progress;
+  if(els.progressText)els.progressText.textContent=c.progressText;
+  if(els.analysisProgress)els.analysisProgress.classList.toggle('hidden',c.progressHidden);
+  return;
+ }
+ if(els.mediaPreview)els.mediaPreview.innerHTML='';
+ if(els.coveragePanel){els.coveragePanel.innerHTML='';els.coveragePanel.classList.add('hidden')}
+ if(els.analysisProgress)els.analysisProgress.classList.add('hidden');
+ renderAnalysisSlotStateV54();
+}
+function renderAnalysisSlotStateV54(){
+ const s=state.slots[selectedSlot-1];
+ if(!els.analysisResult)return;
+ if(!s||s.status!=='active'){els.analysisResult.innerHTML='';return}
+ const err=s.lastAnalysisError?.[analysisMode];
+ els.analysisResult.innerHTML=`<div class="result-card"><h3>Slot ${selectedSlot} · ${esc(s.teamName)}</h3>
+ <div class="data-grid">
+  <div class="data-cell"><span>Modo</span><b>${esc(analysisMode)}</b></div>
+  <div class="data-cell"><span>Adversário</span><b>${esc(s.opponent?.teamName)}</b></div>
+  <div class="data-cell"><span>Força</span><b>${esc(s.myTeam?.overall)} × ${esc(s.opponent?.overall)}</b></div>
+  <div class="data-cell"><span>Última leitura</span><b>${esc(s.lastAnalysisByMode?.[analysisMode]?fmtDateTime(s.lastAnalysisByMode[analysisMode]):'Ainda não')}</b></div>
+ </div>${err?`<p class="danger-text small"><b>Último erro:</b> ${esc(err)}</p>`:''}</div>`;
+}
+function renderGlobalJobV54(){
+ const b=document.getElementById('globalJobBanner');if(!b)return;
+ const j=activeAnalysisJobV54;
+ if(!j){b.classList.add('hidden');b.innerHTML='';return}
+ b.classList.remove('hidden');
+ const cls=j.status==='error'?'error':j.status==='done'?'done':'busy';
+ b.className=`global-job ${cls}`;
+ b.innerHTML=`<div><b>Slot ${j.slot} · ${esc(j.modeLabel)}</b><span>${esc(j.text||'Processando…')}</span></div><strong>${j.progress||0}%</strong>`;
+}
+function setProgress(p,text){
+ const pct=Math.max(0,Math.min(100,Math.round(Number(p)||0)));
+ if(activeAnalysisJobV54){activeAnalysisJobV54.progress=pct;activeAnalysisJobV54.text=text;renderGlobalJobV54()}
+ if(els.progressBar)els.progressBar.style.width=`${pct}%`;
+ if(els.progressText)els.progressText.textContent=text;
+ if(activeAnalysisJobV54 && selectedSlot===activeAnalysisJobV54.slot && analysisMode===activeAnalysisJobV54.mode)cacheAnalysisUiV54();
+}
+function bindAnalysisModes(){
+ document.querySelectorAll('[data-analysis-mode]').forEach(b=>b.addEventListener('click',()=>{
+  cacheAnalysisUiV54();
+  analysisMode=b.dataset.analysisMode;
+  document.querySelectorAll('[data-analysis-mode]').forEach(x=>x.classList.toggle('active',x===b));
+  renderAnalysisMode();
+  restoreAnalysisUiV54();
+ }))
+}
+function showView(name){
+ document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x.dataset.view===name));
+ document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+ document.getElementById('view-'+name)?.classList.add('active');
+ renderSlotSwitcher();
+ if(name==='market')renderMarket();
+ if(name==='history')renderHistory();
+ if(name==='info')renderInfo();
+ if(name==='analyze'){if(els.slotTarget)els.slotTarget.value=String(selectedSlot);renderAnalysisMode();restoreAnalysisUiV54()}
+}
+function setSelectedSlot(n){
+ n=Number(n);if(![1,2,3,4].includes(n))return;
+ cacheAnalysisUiV54();
+ selectedSlot=n;localStorage.setItem('osm_ai_coach_selected_slot_v52',String(n));
+ renderSlotSwitcher();if(els.slotTarget)els.slotTarget.value=String(n);
+ renderToday();renderMarket();renderHistory();renderInfo();renderAnalysisMode();
+ if(document.getElementById('view-analyze')?.classList.contains('active'))restoreAnalysisUiV54();
+ toast(`Slot ${n} selecionado`);
+}
+function resolveCaptureSlot(c){
+ if(analysisTargetOverrideV54)return Number(analysisTargetOverrideV54);
+ const target=els.slotTarget?.value;if(target&&target!=='auto')return Number(target);
+ if([1,2,3,4].includes(Number(c.slotNumber)))return Number(c.slotNumber);
+ if(c.teamName){const found=state.slots.find(s=>s.teamName&&normalize(s.teamName)===normalize(c.teamName));if(found)return found.slotNumber}
+ return selectedSlot;
+}
+
+async function extractUniformFramesV54(file,count=6){
+ const url=URL.createObjectURL(file),v=document.createElement('video');v.src=url;v.muted=true;v.playsInline=true;v.preload='metadata';
+ await new Promise((res,rej)=>{v.onloadedmetadata=res;v.onerror=()=>rej(new Error(`Não consegui abrir ${file.name}`))});
+ const dur=Math.max(.2,v.duration||1),out=[];
+ for(let i=0;i<count;i++){
+  const t=Math.min(dur-.05,Math.max(.05,dur*(i+.5)/count));
+  await seekVideo(v,t);out.push(captureVideoFrame(v,t,file.name));
+ }
+ URL.revokeObjectURL(url);return out;
+}
+async function analyzeCalendarFramesV54(frames,slotNumber){
+ const s=state.slots[slotNumber-1];
+ const parts=[{text:`Você está lendo o CALENDÁRIO do OSM 26 em sequência temporal. Há várias capturas do mesmo vídeo, cobrindo do começo ao fim.
+NÃO EXTRAIA NEM INVENTE DATAS. O vídeo serve somente para identificar a ORDEM das partidas.
+
+REGRAS VISUAIS:
+- símbolo de casa/casinha à esquerda da partida => venue="Casa";
+- sem casinha => venue="Fora";
+- símbolo de taça/troféu => competitionType="cup";
+- sem taça => competitionType="league";
+- V => vitória já ocorrida; D => derrota já ocorrida; E => empate já ocorrido;
+- placar numérico, por exemplo 2-2 ou 3-0, => partida já ocorrida;
+- partida sem V/D/E e sem placar => played=false;
+- preserve TODAS as partidas visíveis ao longo das imagens, sem duplicar a mesma rodada;
+- retorne em ordem de calendário/rodada;
+- extraia o placar numérico quando legível; caso só haja V/D/E, use outcome e deixe result=null;
+- não invente adversário ou rodada.
+
+RETORNE APENAS JSON:
+{"matches":[{"sequence":1,"round":null,"opponent":null,"competitionType":"league|cup","venue":"Casa|Fora","result":null,"outcome":"V|D|E|null","played":false,"conditional":false}]}
+
+Contexto do slot: ${JSON.stringify({team:s.teamName,round:s.round,competition:s.competitionName})}`}];
+ for(const f of frames)parts.push({inlineData:{mimeType:f.mimeType,data:f.base64}});
+ return geminiJson(parts,{temperature:.01,maxOutputTokens:8000});
+}
+function normalizeCalendarMatchV54(x){
+ const outcome=['V','D','E'].includes(String(x.outcome||'').toUpperCase())?String(x.outcome).toUpperCase():null;
+ return {sequence:Number(x.sequence)||null,round:x.round??null,opponent:x.opponent??null,competitionType:x.competitionType==='cup'?'cup':'league',
+ venue:x.venue==='Casa'?'Casa':'Fora',result:x.result||null,outcome,played:!!x.played||!!outcome||!!x.result,conditional:!!x.conditional,skipped:false,
+ dateTime:null,calendarAnchored:false};
+}
+function calendarRowKeyV54(x){return `${x.round??''}|${normalize(x.opponent||'')}|${x.competitionType||''}`}
+function applyCalendarResultV54(result,slotNumber){
+ const s=state.slots[slotNumber-1],old=new Map((s.schedule||[]).map(x=>[calendarRowKeyV54(x),x]));
+ const incoming=(result.matches||[]).map(normalizeCalendarMatchV54);
+ s.schedule=incoming.map((x,i)=>{
+  const prev=old.get(calendarRowKeyV54(x))||{};
+  return {...prev,...x,
+   result:prev.result&&String(prev.result).match(/\d/) ? prev.result : (x.result||prev.result||null),
+   played:!!(prev.played||x.played),
+   tacticSnapshot:prev.tacticSnapshot||null,opponentSnapshot:prev.opponentSnapshot||null,
+   resultEntryAt:prev.resultEntryAt||null
+  };
+ });
+ pruneConditionalCupMatches(s);
+ s.calendarReadAt=nowIso();s.updatedAt=nowIso();
+ if(s.calendarAnchorAt)applyCalendarAnchorV54(slotNumber,s.calendarAnchorAt,false);
+ saveState();
+}
+function localDateTimeValueV54(iso){
+ if(!iso)return '';
+ const d=new Date(iso);if(Number.isNaN(d.getTime()))return '';
+ const z=new Date(d.getTime()-d.getTimezoneOffset()*60000);return z.toISOString().slice(0,16);
+}
+function applyCalendarAnchorV54(n,value,notify=true){
+ const s=state.slots[n-1];if(!value)return;
+ const anchor=new Date(value);if(Number.isNaN(anchor.getTime())){toast('Data/hora inválida');return}
+ const rows=s.schedule||[];const anchorIndex=rows.findIndex(x=>!x.played&&!x.skipped);
+ if(anchorIndex<0){toast('Não encontrei próximo jogo pendente no calendário');return}
+ s.calendarAnchorAt=anchor.toISOString();s.calendarAnchorIndex=anchorIndex;
+ rows.forEach((x,i)=>{const d=new Date(anchor);d.setDate(d.getDate()+(i-anchorIndex));x.dateTime=d.toISOString();x.calendarAnchored=true});
+ ensureNextMatchFromScheduleV54(s);s.updatedAt=nowIso();saveState();
+ if(notify)toast('Data/hora do próximo jogo aplicada ao calendário');
+ renderCalendarResultV54({matches:rows},n);
+}
+function ensureNextMatchFromScheduleV54(s){
+ const now=Date.now();const next=(s.schedule||[]).filter(x=>!x.played&&!x.skipped&&x.dateTime&&new Date(x.dateTime).getTime()>now).sort((a,b)=>new Date(a.dateTime)-new Date(b.dateTime))[0];
+ if(next){s.match.nextMatchAt=next.dateTime;s.match.venue=next.venue||null;s.opponent.teamName=next.opponent||null;return}
+ s.match.nextMatchAt=null;
+}
+function latestPendingResultRow(s){
+ if(!s?.calendarAnchorAt)return null;
+ const rows=(s.schedule||[]).map((x,i)=>({...x,_i:i})).filter(x=>!x.result&&!x.played&&!x.skipped&&x.calendarAnchored&&x.dateTime&&new Date(x.dateTime).getTime()<=Date.now());
+ rows.sort((a,b)=>new Date(b.dateTime)-new Date(a.dateTime));return rows[0]||null;
+}
+function nextFutureRow(s){
+ if(!s?.calendarAnchorAt)return null;
+ return (s.schedule||[]).filter(x=>!x.result&&!x.played&&!x.skipped&&x.calendarAnchored&&x.dateTime&&new Date(x.dateTime).getTime()>Date.now()).sort((a,b)=>new Date(a.dateTime)-new Date(b.dateTime))[0]||null;
+}
+function calendarStatusV54(x,s,i){
+ if(x.result)return `<span class="calendar-score">${esc(x.result)}</span>`;
+ if(x.played)return `<span class="done-label">${esc(x.outcome||'Jogado')}</span>`;
+ if(x.skipped)return `<span class="muted">Ignorado</span>`;
+ if(!s.calendarAnchorAt||!x.dateTime)return `<span class="muted">Aguardando data/hora</span>`;
+ if(new Date(x.dateTime).getTime()<=Date.now()){
+  return x.tacticSnapshot?`<button class="btn tiny danger" onclick="resultModal(${s.slotNumber},${i})">Registrar resultado</button>`:`<span class="warn-text">Horário passou · sem tática registrada</span>`;
+ }
+ return `<span class="future-label">Agendado</span>`;
+}
+function calendarTableHtml(s){
+ const rows=s.schedule||[];
+ if(!rows.length)return '<p class="muted">Calendário ainda não lido.</p>';
+ return `<div class="calendar-list">${rows.map((x,i)=>`<div class="calendar-row ${(!x.played&&!x.result&&x.calendarAnchored&&x.dateTime&&new Date(x.dateTime).getTime()<=Date.now())?'overdue':''} ${x.skipped?'skipped':''}">
+  <div class="calendar-main"><b>${x.competitionType==='cup'?'🏆':'⚽'} ${esc(x.opponent||'Adversário')}</b><span>${esc(x.venue||'NI')} · ${x.round!=null?'Rodada '+esc(x.round):'Rodada NI'}</span></div>
+  <div class="calendar-when"><b>${x.dateTime?esc(fmtDateTime(x.dateTime)):'Data/hora pendente'}</b></div>
+  <div class="calendar-status">${calendarStatusV54(x,s,i)}</div>
+ </div>`).join('')}</div>`;
+}
+function renderCalendarResultV54(result,slotNumber=selectedSlot){
+ const s=state.slots[slotNumber-1],rows=s.schedule||[];
+ if(slotNumber!==selectedSlot||analysisMode!=='calendar')return;
+ if(els.coveragePanel)els.coveragePanel.classList.add('hidden');
+ const nextPending=rows.find(x=>!x.played&&!x.skipped);
+ const prefill=localDateTimeValueV54(s.calendarAnchorAt||s.match.nextMatchAt);
+ els.analysisResult.innerHTML=`<div class="result-card"><h3>Calendário · Slot ${slotNumber}</h3>
+ <p class="muted small">O vídeo define ordem, adversário, casa/fora, taça e resultados. A data é ancorada manualmente no próximo jogo para não inventar datas.</p>
+ ${nextPending?`<div class="calendar-anchor"><label>Data/hora do próximo jogo (${esc(nextPending.opponent||'adversário')})<input id="calendarAnchorInput" type="datetime-local" value="${esc(prefill)}"></label><button class="btn" onclick="applyCalendarAnchorV54(${slotNumber},document.getElementById('calendarAnchorInput').value)">Aplicar ao calendário</button></div>`:''}
+ ${calendarTableHtml(s)}</div>`;
+ cacheAnalysisUiV54(slotNumber,'calendar');
+}
+function renderInfo(){
+ const s=state.slots[selectedSlot-1];if(!els.infoContent)return;
+ if(!s||s.status!=='active'){els.infoContent.innerHTML=`<div class="card"><p class="muted">Slot ${selectedSlot} livre.</p></div>`;return}
+ els.infoContent.innerHTML=`<div class="card"><div class="market-head"><div><div class="slot-num">SLOT ${selectedSlot}</div><h3>${esc(s.teamName)} · ${esc(s.competitionName)}</h3></div><button class="btn secondary" onclick="configureSlot(${selectedSlot})">Editar</button></div>
+ <div class="kpis"><div class="kpi"><span>Posição</span><b>${esc(s.myTeam?.leaguePosition)}</b></div><div class="kpi"><span>Rodada</span><b>${esc(s.round)}/${esc(s.totalRounds)}</b></div><div class="kpi"><span>Força</span><b>${esc(s.myTeam?.overall)}</b></div><div class="kpi"><span>Próximo</span><b>${esc(s.match?.nextMatchAt?fmtDateTime(s.match.nextMatchAt):'Definir data/hora')}</b></div></div></div>
+ <div class="card"><h3>Evolução da posição</h3>${positionChartHtml(s)}</div>
+ <div class="card"><div class="market-head"><h3>Calendário</h3><button class="btn secondary" onclick="openCalendarForSlot(${selectedSlot})">Atualizar calendário</button></div>${calendarTableHtml(s)}</div>`;
+}
+
+async function applyResultVideoV54(r,slotNumber){
+ const s=state.slots[slotNumber-1],gf=Number(r.gf),ga=Number(r.ga);if(!Number.isFinite(gf)||!Number.isFinite(ga))throw new Error('Não consegui identificar o placar final no vídeo.');
+ const cal=resolveCalendarResultRow(s,null),tactic=cal?.tacticSnapshot||s.tactic;if(!tactic)throw new Error('Primeiro gere a tática desse jogo. O resultado só pode ser registrado depois da tática.');
+ const entry={createdAt:nowIso(),scheduleIndex:cal?cal._i:null,opponent:r.opponent||cal?.opponent||s.opponent.teamName,gf,ga,score:r.score||`${gf}-${ga}`,note:'Resultado extraído por vídeo',tactic:structuredClone(tactic),stats:r.stats||{},events:r.events||[],context:{myOverall:s.myTeam.overall,oppOverall:s.opponent.overall,oppFormation:r.oppFormation||s.opponent.formation,myFormation:r.myFormation||tactic.formation,oppStyle:s.opponent.style,oppMarking:s.opponent.marking,oppOffside:s.opponent.offside,opponentHuman:s.opponent.human,venue:cal?.venue||s.match.venue,referee:s.match.refereeColor||s.match.refereeName}};
+ s.results=s.results||[];s.results.push(entry);
+ if(cal&&s.schedule?.[cal._i]){const row=s.schedule[cal._i];row.played=true;row.result=entry.score;row.resultEntryAt=entry.createdAt;row.tacticSnapshot=row.tacticSnapshot||structuredClone(tactic);if(row.competitionType==='cup'&&gf<ga)pruneConditionalCupMatches(s)}
+ s.tactic=null;s.tacticNeedsRefresh=true;s.updatedAt=nowIso();ensureNextMatchFromScheduleV54(s);saveState();
+}
+
+async function handleFiles(files){
+ if(!files.length)return;
+ if(!localStorage.getItem(API_KEY_STORAGE)){apiModal('Antes de analisar, salve sua chave Gemini.');return}
+ if(activeAnalysisJobV54?.status==='busy'){toast(`Já existe uma leitura em andamento no Slot ${activeAnalysisJobV54.slot}`);return}
+ const jobMode=analysisMode,jobSlot=selectedSlot,labels={tactic:'Tática',market:'Elenco',calendar:'Calendário',result:'Resultado'};
+ activeAnalysisJobV54={slot:jobSlot,mode:jobMode,modeLabel:labels[jobMode]||jobMode,status:'busy',progress:1,text:'Iniciando…',startedAt:nowIso()};
+ analysisTargetOverrideV54=jobSlot;renderGlobalJobV54();await acquireOcrWakeLock();
+ // limpa somente a área do trabalho NOVO; trocar de aba não limpa.
+ if(els.mediaPreview)els.mediaPreview.innerHTML='';if(els.coveragePanel){els.coveragePanel.innerHTML='';els.coveragePanel.classList.add('hidden')}if(els.analysisResult)els.analysisResult.innerHTML='';
+ if(els.analysisProgress)els.analysisProgress.classList.remove('hidden');
+ try{
+  const video=files.find(f=>f.type.startsWith('video/')),images=files.filter(f=>f.type.startsWith('image/'));let frames=[],result;
+  if(jobMode==='calendar'){
+   if(video)frames=await extractUniformFramesV54(video,6);else{for(const f of images.slice(0,6))frames.push(await imageFileToFrame(f))}
+   if(!frames.length)throw new Error('Não encontrei imagens no vídeo do calendário.');
+   if(jobSlot===selectedSlot&&analysisMode===jobMode)renderFramePreview(frames);
+   setProgress(35,'Lendo calendário completo…');result=await analyzeCalendarFramesV54(frames,jobSlot);applyCalendarResultV54(result,jobSlot);
+   if(jobSlot===selectedSlot&&analysisMode===jobMode)renderCalendarResultV54(result,jobSlot);
+  }else{
+   if(video){setProgress(6,'Selecionando quadros úteis…');frames=await extractVideoFramesFast(video,frameLimitForMode(jobMode))}
+   else{for(const f of images.slice(0,frameLimitForMode(jobMode)))frames.push(await imageFileToFrame(f))}
+   if(!frames.length)throw new Error('Não encontrei quadros utilizáveis no vídeo.');
+   if(jobSlot===selectedSlot&&analysisMode===jobMode)renderFramePreview(frames.slice(0,8));
+   setProgress(18,`OCR local em ${frames.length} quadros…`);const ocr=await runLocalOcr(frames);
+   if(jobMode==='tactic'){
+    const selected=selectRequiredTacticFrames(frames,ocr);
+    if(jobSlot===selectedSlot&&analysisMode===jobMode)renderRequiredTacticPreview(selected);
+    const requiredFrames=assertAllRequiredTacticScreens(selected);setProgress(60,'Gerando tática…');
+    result=await analyzeOcrPackage(ocr,requiredFrames);applyVisionResult(result);applyRecommendedTactics(result);
+    if(jobSlot===selectedSlot&&analysisMode===jobMode)renderAnalysisResult(result);
+   }else if(jobMode==='result'){
+    const evidence=selectVisualEvidence(frames,evidenceLimitForMode(jobMode));setProgress(58,'Lendo resultado e cartões…');
+    result=await analyzeResultOcr(ocr,evidence);await applyResultVideoV54(result,jobSlot);
+    if(jobSlot===selectedSlot&&analysisMode===jobMode)renderResultVideo(result);
+   }else{
+    const evidence=selectVisualEvidence(frames,evidenceLimitForMode(jobMode));setProgress(58,'Lendo elenco e posições…');
+    result=await analyzeOcrPackage(ocr,evidence);applyVisionResult(result);const ss=state.slots[jobSlot-1];ss.lastRosterSnapshotAt=nowIso();recalculateSquadValue(ss);ss.market=[];
+    if(jobSlot===selectedSlot&&analysisMode===jobMode)renderAnalysisResult(result);
+   }
+  }
+  const ss=state.slots[jobSlot-1];ss.lastAnalysisByMode=ss.lastAnalysisByMode||{};ss.lastAnalysisByMode[jobMode]=nowIso();ss.lastAnalysisError=ss.lastAnalysisError||{};delete ss.lastAnalysisError[jobMode];
+  state.lastAnalysisAt=nowIso();saveState();setProgress(100,'Concluído');
+  activeAnalysisJobV54.status='done';activeAnalysisJobV54.text='Concluído';renderGlobalJobV54();cacheAnalysisUiV54(jobSlot,jobMode);
+  setTimeout(()=>{if(activeAnalysisJobV54?.status==='done'){activeAnalysisJobV54=null;renderGlobalJobV54()}},5000);
+ }catch(e){
+  console.error(e);const ss=state.slots[jobSlot-1];ss.lastAnalysisError=ss.lastAnalysisError||{};ss.lastAnalysisError[jobMode]=String(e.message||e);saveState();
+  activeAnalysisJobV54.status='error';activeAnalysisJobV54.text=String(e.message||e);activeAnalysisJobV54.progress=100;renderGlobalJobV54();
+  if(jobSlot===selectedSlot&&analysisMode===jobMode)els.analysisResult.innerHTML=`<div class="result-card"><h3 class="danger-text">Falha na análise</h3><p>${esc(e.message||e)}</p><p class="muted small">O erro ficou salvo neste slot. Você pode trocar de aba e voltar sem perdê-lo.</p></div>`;
+  cacheAnalysisUiV54(jobSlot,jobMode);
+ }finally{
+  analysisTargetOverrideV54=null;await releaseOcrWakeLock();
+  if(jobSlot===selectedSlot&&analysisMode===jobMode)setTimeout(()=>els.analysisProgress?.classList.add('hidden'),1200);
+ }
+}
+
+Object.assign(window,{applyCalendarAnchorV54,showView,setSelectedSlot,prepareReanalysis,configureSlot,saveSlotConfigV5,openCalendarForSlot,finishCompetition,confirmFinish,slotDetailModal,generateTacticForSlot,tacticModal,manualTacticModal,saveManualTactic,strong433Modal,generateStrong433,resultModal,saveResultV52,runSetupStep,scheduleModal,saveSchedule,downloadIcs,openMarketSnapshot,aiStrategyReview,strategyModal,renderInfo,updateEventIntel,rosterTransactionModal,saveRosterTransaction,saveVideoResultPosition,saveApiKey,clearApiKey,closeModal});
 document.addEventListener('DOMContentLoaded',init);
