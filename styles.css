@@ -85,3 +85,33 @@
 
 /* v5.6 */
 .global-job.error{background:#551e28!important;color:#ffd9dc!important}.required-card.ok img{object-fit:cover}.required-card.missing{background:#241317}
+
+/* v6.0 - painel tático inspirado na organização visual do OSM */
+.osm-tactic-ui{display:flex;flex-direction:column;gap:12px;margin:14px 0}
+.osm-tactic-top{display:grid;grid-template-columns:1.2fr 1.4fr .9fr;gap:10px}
+.osm-tactic-top>div,.osm-bottom>div{background:#071a2d;border:1px solid #1d3a58;border-radius:14px;padding:12px;text-align:center}
+.osm-tactic-top span,.osm-bottom span{display:block;color:#86a0bd;font-size:10px;font-weight:850;text-transform:uppercase;letter-spacing:.06em}
+.osm-tactic-top b,.osm-bottom b{display:block;margin-top:5px;font-size:15px}
+.mini-pitch{margin:10px auto 0;width:110px;height:72px;border:2px solid #8ee28a;background:#148d28;border-radius:4px;display:flex;flex-direction:column;justify-content:space-around;color:white;font-size:8px;overflow:hidden}
+.mini-pitch i{font-style:normal;letter-spacing:8px;white-space:nowrap}
+.plan-symbol{height:72px;margin-top:10px;border-radius:7px;background:#168829;color:#ff4a3d;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:900}
+.ref-icon{font-size:36px;margin-top:11px}
+.osm-sector-wrap{display:grid;grid-template-columns:180px minmax(0,1fr);gap:12px;background:#071a2d;border:1px solid #1d3a58;border-radius:14px;padding:12px}
+.sector-pitch{height:210px;background:#149128;border:2px solid #9cea91;border-radius:8px;display:grid;grid-template-rows:1fr 1fr 1fr;position:relative;overflow:hidden}
+.sector-pitch:before,.sector-pitch:after{content:"";position:absolute;left:0;right:0;border-top:2px solid #d8ffd6}
+.sector-pitch:before{top:33.3%}.sector-pitch:after{top:66.6%}
+.sector-line{display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:1}.sector-line strong{font-size:32px;color:#ff8b28;text-shadow:0 1px 2px #000}.sector-line span{font-size:9px;color:#fff;font-weight:900}
+.sector-line.forwards strong{color:#67c8ff}.sector-line.mids strong{color:#ffd56b}
+.sector-values{display:grid;grid-template-rows:repeat(3,1fr);gap:7px}
+.sector-values>div{background:#0b2239;border-radius:10px;padding:10px;display:flex;flex-direction:column;justify-content:center}
+.sector-values small{color:#8ba5c0;font-size:10px}.sector-values b{font-size:16px;margin-top:4px}
+.osm-sliders{display:flex;flex-direction:column;gap:13px;background:#071a2d;border:1px solid #1d3a58;border-radius:14px;padding:15px}
+.osm-slider-head{display:flex;justify-content:space-between;align-items:center}.osm-slider-head span{color:#a8bdd4;font-size:12px;font-weight:850}.osm-slider-head b{background:#02070d;padding:5px 9px;border-radius:5px}
+.osm-slider-track{height:8px;background:#173a59;border-radius:99px;position:relative;margin-top:6px}.osm-slider-track i{height:100%;display:block;background:#20aaff;border-radius:99px}.osm-slider-track em{position:absolute;top:50%;transform:translate(-50%,-50%);width:18px;height:18px;background:white;border-radius:50%;box-shadow:0 0 0 3px #fff2}
+.osm-bottom{display:grid;grid-template-columns:1fr 1fr;gap:10px}.player-icon{font-size:28px;margin-top:7px}
+.tactic-exact{margin-top:12px;background:#091827;border:1px solid #1d3854;border-radius:12px;padding:10px}.tactic-exact summary{cursor:pointer;font-weight:850;color:#9fc7e8}
+@media(max-width:640px){
+ .osm-tactic-top{grid-template-columns:1fr 1fr}.osm-tackle{grid-column:1/-1}
+ .osm-sector-wrap{grid-template-columns:125px minmax(0,1fr)}.sector-pitch{height:190px}
+ .sector-values b{font-size:13px}.mini-pitch{width:90px;height:60px}.plan-symbol{height:60px;font-size:18px}
+}

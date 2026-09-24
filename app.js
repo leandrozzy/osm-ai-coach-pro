@@ -5,7 +5,7 @@ const STATE_KEY='osm_ai_coach_pro_state_v52_clean';
 const SETTINGS_KEY='osm_ai_coach_pro_settings_v4';
 const API_KEY_STORAGE='osm_ai_coach_pro_gemini_key';
 const FORMATIONS=['4-3-3 A','4-3-3 B','4-5-1','4-2-3-1','4-4-2 A','4-4-2 B','3-2-5','3-2-3-2','3-3-4 A','3-3-4 B','3-4-3 A','3-4-3 B','3-3-2-2','3-5-2','4-2-4 A','4-2-4 B','5-2-3 A','5-2-3 B','5-3-2','5-3-1-1','5-4-1 A','5-4-1 B','6-3-1 A','6-3-1 B'];
-const GAME_PLANS=['Jogar pelas alas','Jogo de passes','Contra-ataque','Chutar de longe','Bola longa'];
+const GAME_PLANS=['Jogar pelas alas','Jogo de passes','Bola longa','Contra-ataque','Remate à vista'];
 const COVERAGE_LABELS={dashboard:'Tela inicial',analyst:'Data Analyst',analystDetails:'Detalhes do analista',squad:'Elenco',market:'Mercado',calendar:'Calendário/horário',training:'Treinamento',result:'Resultado/estatísticas'};
 const els={};
 
@@ -668,7 +668,7 @@ async function generateTacticForSlot(n,silent=false){const s=state.slots[n-1];if
 function sanitizeTactic(t,s){const out={formation:FORMATIONS.includes(t.formation)?t.formation:null,gamePlan:GAME_PLANS.includes(t.gamePlan)?t.gamePlan:null,pressure:clampInt(t.pressure),mentality:clampInt(t.mentality),tempo:clampInt(t.tempo),marking:['À zona','Marcação à zona','Individual','Marcação individual'].includes(t.marking)?t.marking:'À zona',offside:/sim/i.test(String(t.offside))?'Sim':'Não',tackling:t.tackling||refereeTackling(s.match.refereeColor||s.match.refereeName),attackInstruction:t.attackInstruction||'Atacar apenas',midfieldInstruction:t.midfieldInstruction||'Manter posição',defenceInstruction:t.defenceInstruction||'Defender atrás',confidence:t.confidence||'média',reason:t.reason||'Gerada a partir dos dados disponíveis.',generatedAt:nowIso(),engine:'Gemini'};if(!out.formation||!out.gamePlan)return {...fallbackTactic(s),reason:out.reason,generatedAt:out.generatedAt,engine:'Híbrido'};return out}
 function clampInt(v){const n=Math.round(Number(v));return Number.isFinite(n)?Math.max(0,Math.min(100,n)):null}
 function refereeTackling(r){const s=normalize(r);if(/red|vermel|strict|rigor/.test(s))return 'Cuidadoso';if(/green|verde|lenient|permiss/.test(s))return 'Agressivo';return 'Normal'}
-function fallbackTactic(s){const a=Number(s.myTeam.overall),b=Number(s.opponent.overall),diff=Number.isFinite(a)&&Number.isFinite(b)?a-b:null;let formation='4-3-3 B',gamePlan='Jogo de passes',pressure=60,mentality=58,tempo=67,mid='Manter posição';if(diff!==null&&diff>20){formation='4-3-3 A';gamePlan='Jogar pelas alas';pressure=72;mentality=72;tempo=70}else if(diff!==null&&diff>=7){formation='4-3-3 B';gamePlan='Jogar pelas alas';pressure=66;mentality=66;tempo=68}else if(diff!==null&&diff<=-15){formation='5-3-2';gamePlan='Contra-ataque';pressure=36;mentality=28;tempo=66;mid='Apoiar a defesa'}else if(diff!==null&&diff<0){formation='4-5-1';gamePlan='Chutar de longe';pressure=43;mentality=36;tempo=63;mid='Apoiar a defesa'}return {formation,gamePlan,pressure,mentality,tempo,marking:'À zona',offside:'Não',tackling:refereeTackling(s.match.refereeColor||s.match.refereeName),attackInstruction:'Atacar apenas',midfieldInstruction:mid,defenceInstruction:'Defender atrás',confidence:diff===null?'baixa':'média',reason:'Fallback local conservador baseado na força relativa e no árbitro; dados ausentes não foram estimados.',generatedAt:nowIso(),engine:'Local'}}
+function fallbackTactic(s){const a=Number(s.myTeam.overall),b=Number(s.opponent.overall),diff=Number.isFinite(a)&&Number.isFinite(b)?a-b:null;let formation='4-3-3 B',gamePlan='Jogo de passes',pressure=60,mentality=58,tempo=67,mid='Manter posição';if(diff!==null&&diff>20){formation='4-3-3 A';gamePlan='Jogar pelas alas';pressure=72;mentality=72;tempo=70}else if(diff!==null&&diff>=7){formation='4-3-3 B';gamePlan='Jogar pelas alas';pressure=66;mentality=66;tempo=68}else if(diff!==null&&diff<=-15){formation='5-3-2';gamePlan='Contra-ataque';pressure=36;mentality=28;tempo=66;mid='Apoiar a defesa'}else if(diff!==null&&diff<0){formation='4-5-1';gamePlan='Remate à vista';pressure=43;mentality=36;tempo=63;mid='Apoiar a defesa'}return {formation,gamePlan,pressure,mentality,tempo,marking:'À zona',offside:'Não',tackling:refereeTackling(s.match.refereeColor||s.match.refereeName),attackInstruction:'Atacar apenas',midfieldInstruction:mid,defenceInstruction:'Defender atrás',confidence:diff===null?'baixa':'média',reason:'Fallback local conservador baseado na força relativa e no árbitro; dados ausentes não foram estimados.',generatedAt:nowIso(),engine:'Local'}}
 function tacticModal(n){const s=state.slots[n-1];const t=s.tactic;if(!t){generateTacticForSlot(n);return}const rows=[['Formação',t.formation],['Estilo de jogo',t.gamePlan],['Pressão',t.pressure],['Estilo/Mentalidade',t.mentality],['Temporização/Ritmo',t.tempo],['Marcação',t.marking],['Impedimento',t.offside],['Desarme',t.tackling],['Avançadas – Ataque',t.attackInstruction],['Avançadas – Meio',t.midfieldInstruction],['Avançadas – Defesa',t.defenceInstruction]];openModal(`<h2>Tática · Slot ${n}</h2><p class="muted small">${esc(s.teamName)} × ${esc(s.opponent.teamName)} · ${esc(t.engine||'IA')}</p><table class="tactic-table">${rows.map(([k,v])=>`<tr><td>${esc(k)}</td><td><b>${esc(v)}</b></td></tr>`).join('')}</table><p class="small muted">${esc(t.reason||'')}</p><div class="actions"><button class="btn" onclick="generateTacticForSlot(${n})">Recalcular com dados atuais</button></div>`)}
 
 
@@ -1861,7 +1861,7 @@ function fallbackTacticV58(s){
  if(diff!==null&&diff>=15){const d=dominantBaseV58(s);formation=d.formation;gamePlan=d.gamePlan;pressure=d.pressure;mentality=d.mentality;tempo=d.tempo}
  else if(diff!==null&&diff>=7){formation='4-3-3 B';gamePlan='Jogar pelas alas';pressure=66;mentality=70;tempo=68}
  else if(diff!==null&&diff<=-15){formation='5-3-2';gamePlan='Contra-ataque';pressure=38;mentality=30;tempo=68}
- else if(diff!==null&&diff<0){formation='4-5-1';gamePlan='Chutar de longe';pressure=44;mentality=38;tempo=64}
+ else if(diff!==null&&diff<0){formation='4-5-1';gamePlan='Remate à vista';pressure=44;mentality=38;tempo=64}
  const lines=linePolicyV58(s,formation,gamePlan);
  return {formation,gamePlan,pressure,mentality,tempo,marking:'À zona',offside:'Não',tackling:refereeTackling(s?.match?.refereeColor||s?.match?.refereeName,s),attackInstruction:lines.attack,midfieldInstruction:lines.mid,defenceInstruction:lines.def,confidence:diff===null?'baixa':'média',reason:'Fallback contextual v5.8 por força, árbitro, local e perfil ofensivo.',generatedAt:nowIso(),engine:'Local v5.8'};
 }
@@ -1989,6 +1989,204 @@ function chooseNextAction(){
 function slotCardHtml(s){
  const active=s.status==='active',selected=s.slotNumber===selectedSlot,opp=s.opponent||{},me=s.myTeam||{};
  return `<article class="slot-card ${selected?'selected-slot':''}" onclick="if(event.target.tagName!=='BUTTON')setSelectedSlot(${s.slotNumber})"><div class="slot-top"><div><div class="slot-num">SLOT ${s.slotNumber}${s.competitionType==='Batalha'?' · BATALHA':''}</div><div class="slot-team">${esc(s.teamName||'Slot disponível')}</div><div class="slot-comp">${esc(s.competitionName||'Sem competição')}</div></div><span class="status-pill">${active?(s.tactic?'Tática pronta':'Ativo'):'Livre'}</span></div>${active?`<div class="matchline"><b>${esc(opp.teamName||'Adversário NI')}</b><div class="small muted">${esc(s.match.venue||'Local NI')} · R${esc(s.round)} · ${s.match.nextMatchAt?countdown(s.match.nextMatchAt):'Horário NI'}</div></div><div class="kpis"><div class="kpi"><span>Força</span><b>${esc(me.overall)}</b></div><div class="kpi"><span>Rival</span><b>${esc(opp.overall)}</b></div><div class="kpi"><span>Formação rival</span><b>${esc(opp.formation)}</b></div><div class="kpi"><span>Tática</span><b>${s.tactic?'Pronta':'—'}</b></div></div><div class="actions">${s.tactic?`<button class="btn" onclick="event.stopPropagation();refreshTacticFromSavedDataV59(${s.slotNumber})">Atualizar tática</button><button class="btn secondary" onclick="event.stopPropagation();openTacticVideoRefreshV59(${s.slotNumber})">Vídeo novo</button>`:`<button class="btn" onclick="event.stopPropagation();openTacticVideoRefreshV59(${s.slotNumber})">Gerar tática</button>`}<button class="btn secondary" onclick="event.stopPropagation();strong433Modal(${s.slotNumber})">🔥 4-3-3</button><button class="btn secondary" onclick="event.stopPropagation();resultModal(${s.slotNumber})">Resultado</button></div>`:`<div class="actions"><button class="btn" onclick="event.stopPropagation();setSelectedSlot(${s.slotNumber});configureSlot(${s.slotNumber})">Criar competição</button></div>`}</article>`;
+}
+
+
+// ===== v6.0: vocabulário exato do OSM + apresentação visual =====
+const OSM_ATTACK_LINES=['Atacar apenas','Apoiar meio-campo','Ajudar a defender'];
+const OSM_MID_LINES=['Pressionar na frente','Manter posições','Ajudar a defesa'];
+const OSM_DEF_LINES=['Defesas atacantes','Apoiar meio-campo','Defender atrás'];
+const OSM_TACKLING=['Extremo','Agressivo','Normal','Cuidadoso'];
+const OSM_MARKING=['À zona','Homem-a-homem'];
+
+function normalizeGamePlanV60(v){
+ const x=String(v||'').trim();
+ const map={'Chutar de longe':'Remate à vista','Remates de longe':'Remate à vista','Remate de longe':'Remate à vista'};
+ return GAME_PLANS.includes(x)?x:(map[x]||null);
+}
+function normalizeMarkingV60(v){
+ const x=String(v||'').toLowerCase();
+ if(x.includes('homem')||x.includes('individual'))return 'Homem-a-homem';
+ return 'À zona';
+}
+function normalizeAttackLineV60(v){
+ const x=normalize(String(v||''));
+ if(x.includes('ajudar')&&x.includes('def'))return 'Ajudar a defender';
+ if((x.includes('apoiar')||x.includes('ajudar'))&&x.includes('meio'))return 'Apoiar meio-campo';
+ return 'Atacar apenas';
+}
+function normalizeMidLineV60(v){
+ const x=normalize(String(v||''));
+ if((x.includes('ajudar')||x.includes('apoiar'))&&x.includes('def'))return 'Ajudar a defesa';
+ if(x.includes('pression')||x.includes('frente')||x==='atacar')return 'Pressionar na frente';
+ return 'Manter posições';
+}
+function normalizeDefLineV60(v){
+ const x=normalize(String(v||''));
+ if(x.includes('atac'))return 'Defesas atacantes';
+ if((x.includes('apoiar')||x.includes('ajudar'))&&x.includes('meio'))return 'Apoiar meio-campo';
+ return 'Defender atrás';
+}
+function normalizeTacklingV60(v,fallback='Normal'){
+ const x=String(v||fallback).trim();
+ return OSM_TACKLING.includes(x)?x:fallback;
+}
+function tacticVisualArrowV60(kind,text){
+ const x=normalize(text);
+ if(kind==='attack'){
+  if(x.includes('def'))return '↓';
+  if(x.includes('meio'))return '↕';
+  return '↑';
+ }
+ if(kind==='mid'){
+  if(x.includes('def'))return '↓';
+  if(x.includes('pression')||x.includes('frente'))return '↑';
+  return '↔';
+ }
+ if(x.includes('atac'))return '↑';
+ if(x.includes('meio'))return '↑';
+ return '↓';
+}
+function planSymbolV60(plan){
+ return {'Jogar pelas alas':'⇱  ⇲','Jogo de passes':'●→●→●','Bola longa':'⌒➜','Contra-ataque':'⇦ ⚽ ⇨','Remate à vista':'⚽ ➜ 🥅'}[plan]||'⚽';
+}
+function tacticSliderV60(label,value){
+ const n=Math.max(0,Math.min(100,Number(value)||0));
+ return `<div class="osm-slider"><div class="osm-slider-head"><span>${esc(label)}</span><b>${n}</b></div><div class="osm-slider-track"><i style="width:${n}%"></i><em style="left:${n}%"></em></div></div>`;
+}
+function tacticVisualHtmlV60(t){
+ if(!t)return '';
+ return `<div class="osm-tactic-ui">
+  <div class="osm-tactic-top">
+   <div class="osm-formation"><span>Formação</span><b>${esc(t.formation)}</b><div class="mini-pitch"><i>● ● ●</i><i>● ● ●</i><i>● ● ● ●</i><i>●</i></div></div>
+   <div class="osm-plan"><span>Estilo de jogo</span><b>${esc(t.gamePlan)}</b><div class="plan-symbol">${esc(planSymbolV60(t.gamePlan))}</div></div>
+   <div class="osm-tackle"><span>Desarme</span><b>${esc(t.tackling)}</b><div class="ref-icon">🧑‍⚖️</div></div>
+  </div>
+
+  <div class="osm-sector-wrap">
+   <div class="sector-pitch">
+    <div class="sector-line forwards"><strong>${tacticVisualArrowV60('attack',t.attackInstruction)}</strong><span>Avançados</span></div>
+    <div class="sector-line mids"><strong>${tacticVisualArrowV60('mid',t.midfieldInstruction)}</strong><span>Médios</span></div>
+    <div class="sector-line defs"><strong>${tacticVisualArrowV60('def',t.defenceInstruction)}</strong><span>Defesas</span></div>
+   </div>
+   <div class="sector-values">
+    <div><small>Avançados</small><b>${esc(t.attackInstruction)}</b></div>
+    <div><small>Médios</small><b>${esc(t.midfieldInstruction)}</b></div>
+    <div><small>Defesas</small><b>${esc(t.defenceInstruction)}</b></div>
+   </div>
+  </div>
+
+  <div class="osm-sliders">
+   ${tacticSliderV60('Pressão',t.pressure)}
+   ${tacticSliderV60('Estilo',t.mentality)}
+   ${tacticSliderV60('Temporização',t.tempo)}
+  </div>
+
+  <div class="osm-bottom">
+   <div><span>Marcação</span><b>${esc(t.marking)}</b><div class="player-icon">⚽👤</div></div>
+   <div><span>Fazer fora-de-jogo</span><b>${esc(t.offside)}</b><div class="player-icon">🚩</div></div>
+  </div>
+ </div>`;
+}
+function tacticRows(t){
+ return [
+  ['Formação',t?.formation],['Estilo de jogo',t?.gamePlan],['Pressão',t?.pressure],
+  ['Estilo',t?.mentality],['Temporização',t?.tempo],
+  ['Marcação',t?.marking],['Fazer fora-de-jogo',t?.offside],['Desarme',t?.tackling],
+  ['Avançados',t?.attackInstruction],['Médios',t?.midfieldInstruction],['Defesas',t?.defenceInstruction]
+ ];
+}
+function validateTacticV58(raw,s,source='Gemini'){
+ const src=raw||{},diff=tacticStrengthDiffV58(s),dom=dominantBaseV58(s),f=fallbackTacticV58(s);
+ let formation=FORMATIONS.includes(src.formation)?src.formation:f.formation;
+ let gamePlan=normalizeGamePlanV60(src.gamePlan)||normalizeGamePlanV60(f.gamePlan)||'Jogar pelas alas';
+ let pressure=clampInt(src.pressure),mentality=clampInt(src.mentality),tempo=clampInt(src.tempo);
+ if(diff!==null&&diff>=15){
+   if(!/^4-3-3/.test(formation)){formation=dom.formation;gamePlan=normalizeGamePlanV60(dom.gamePlan)||'Jogar pelas alas'}
+   if(pressure===null||pressure<68)pressure=dom.pressure;
+   if(mentality===null||mentality<72)mentality=dom.mentality;
+   if(tempo===null||tempo<68)tempo=dom.tempo;
+   if(pressure===mentality&&mentality===tempo){pressure=dom.pressure;mentality=dom.mentality;tempo=dom.tempo}
+ }
+ if(pressure===null)pressure=f.pressure;if(mentality===null)mentality=f.mentality;if(tempo===null)tempo=f.tempo;
+ const lines=linePolicyV58(s,formation,gamePlan);
+ let attack=normalizeAttackLineV60(src.attackInstruction||lines.attack);
+ let mid=normalizeMidLineV60(src.midfieldInstruction||lines.mid);
+ let def=normalizeDefLineV60(src.defenceInstruction||lines.def);
+ if(diff!==null&&diff>=15&&/^4-3-3/.test(formation)){
+   if(mid==='Ajudar a defesa')mid=normalizeMidLineV60(lines.mid);
+   if(def==='Defender atrás')def=normalizeDefLineV60(lines.def);
+ }
+ const tackle=normalizeTacklingV60(refereeTackling(s?.match?.refereeColor||s?.match?.refereeName,s),'Normal');
+ const marking=normalizeMarkingV60(src.marking);
+ const offside=/sim/i.test(String(src.offside))?'Sim':'Não';
+ return {formation,gamePlan,pressure,mentality,tempo,marking,offside,tackling:tackle,
+ attackInstruction:attack,midfieldInstruction:mid,defenceInstruction:def,
+ confidence:src.confidence||((diff!==null&&Math.abs(diff)>=15)?'alta':'média'),
+ reason:src.reason||`Validada pelo motor contextual com vocabulário exato do OSM.`,
+ generatedAt:nowIso(),engine:source};
+}
+function fallbackTacticV58(s){
+ const diff=tacticStrengthDiffV58(s);let formation='4-3-3 B',gamePlan='Jogo de passes',pressure=58,mentality=60,tempo=62;
+ if(diff!==null&&diff>=15){const d=dominantBaseV58(s);formation=d.formation;gamePlan=normalizeGamePlanV60(d.gamePlan)||'Jogar pelas alas';pressure=d.pressure;mentality=d.mentality;tempo=d.tempo}
+ else if(diff!==null&&diff>=7){formation='4-3-3 B';gamePlan='Jogar pelas alas';pressure=66;mentality=70;tempo=68}
+ else if(diff!==null&&diff<=-15){formation='5-3-2';gamePlan='Contra-ataque';pressure=38;mentality=30;tempo=68}
+ else if(diff!==null&&diff<0){formation='4-5-1';gamePlan='Remate à vista';pressure=44;mentality=38;tempo=64}
+ const lines=linePolicyV58(s,formation,gamePlan);
+ return {formation,gamePlan,pressure,mentality,tempo,marking:'À zona',offside:'Não',
+ tackling:normalizeTacklingV60(refereeTackling(s?.match?.refereeColor||s?.match?.refereeName,s),'Normal'),
+ attackInstruction:normalizeAttackLineV60(lines.attack),midfieldInstruction:normalizeMidLineV60(lines.mid),defenceInstruction:normalizeDefLineV60(lines.def),
+ confidence:diff===null?'baixa':'média',reason:'Fallback contextual com os nomes exatos do OSM.',generatedAt:nowIso(),engine:'Local v6.0'};
+}
+function fallbackTactic(s){return fallbackTacticV58(s)}
+function sanitizeTactic(t,s){return validateTacticV58(t,s,'Gemini + motor v6.0')}
+function tacticPromptV58(s){
+ const diff=tacticStrengthDiffV58(s),band=refereeBandV58(s?.match?.refereeColor||s?.match?.refereeName);
+ return `Você é especialista em OSM 26. Gere UMA tática completa e coerente, sem alternativas.
+
+VOCABULÁRIO OBRIGATÓRIO — responda EXATAMENTE com estes nomes do jogo:
+Estilo de jogo: Jogar pelas alas | Jogo de passes | Bola longa | Contra-ataque | Remate à vista.
+Desarme: Extremo | Agressivo | Normal | Cuidadoso.
+Avançados: Atacar apenas | Apoiar meio-campo | Ajudar a defender.
+Médios: Pressionar na frente | Manter posições | Ajudar a defesa.
+Defesas: Defesas atacantes | Apoiar meio-campo | Defender atrás.
+Marcação: À zona | Homem-a-homem.
+Fazer fora-de-jogo: Sim | Não.
+Sliders: Pressão, Estilo e Temporização, todos inteiros 0-100.
+
+CONTEXTO:
+- diferença de força: ${diff??'NI'} pontos;
+- árbitro: ${s?.match?.refereeColor||s?.match?.refereeName||'NI'} (${band});
+- se eu for >=15 pontos mais forte, postura dominante; meio não deve Ajudar a defesa sem motivo e defesa não deve Defender atrás por padrão;
+- contra humano, dê robustez à mudança tardia;
+- sliders devem refletir contexto e não repetir 70/70/70 por hábito;
+- considere formação/plano/marcação/fora-de-jogo rival, casa/fora, setores, CT, treino secreto e histórico.
+
+DADOS:
+${JSON.stringify(tacticContext(s))}
+
+RETORNE APENAS JSON com:
+formation, gamePlan, pressure, mentality, tempo, marking, offside, tackling,
+attackInstruction, midfieldInstruction, defenceInstruction, confidence, reason.`;
+}
+function tacticModal(n){
+ const s=state.slots[n-1],t=s.tactic;if(!t){generateTacticForSlot(n);return}
+ openModal(`<h2>Tática · Slot ${n}</h2><p class="muted small">${esc(s.teamName)} × ${esc(s.opponent.teamName)} · ${esc(t.engine||'IA')}</p>
+ ${tacticVisualHtmlV60(t)}
+ <details class="tactic-exact"><summary>Ver tabela exata</summary><table class="tactic-table">${tacticRows(t).map(([k,v])=>`<tr><td>${esc(k)}</td><td><b>${esc(v)}</b></td></tr>`).join('')}</table></details>
+ <p class="small muted">${esc(t.reason||'')}</p>
+ <div class="actions"><button class="btn" onclick="refreshTacticFromSavedDataV59(${n})">Recalcular com dados atuais</button><button class="btn secondary" onclick="openTacticVideoRefreshV59(${n})">Vídeo novo</button></div>`);
+}
+function persistentTacticHtml(s){
+ if(!s||s.status!=='active')return '';
+ const late=overdueSchedule(s);
+ if(late){const i=scheduleIndexOf(s,late);return `<div class="card tactic-persistent overdue"><div class="tactic-head"><div><span class="eyebrow">JOGO ENCERRADO / HORÁRIO ULTRAPASSADO</span><h3>${esc(s.teamName)} × ${esc(late.opponent||s.opponent.teamName)}</h3></div></div><div class="actions"><button class="btn danger" onclick="resultModal(${s.slotNumber},${i})">Registrar resultado</button></div></div>`}
+ const near=shouldRefreshNearMatch(s);
+ if(!s.tactic)return `<div class="card tactic-persistent"><div class="tactic-head"><div><span class="eyebrow">TÁTICA · SLOT ${s.slotNumber}</span><h3>Sem tática para este jogo</h3><p class="muted small">${esc(opponentReadTextV59(s))}</p></div></div><div class="actions"><button class="btn" onclick="openTacticVideoRefreshV59(${s.slotNumber})">Analisar adversário por vídeo</button><button class="btn secondary" onclick="strong433Modal(${s.slotNumber})">🔥 4-3-3 Forte</button></div></div>`;
+ return `<div class="card tactic-persistent ${near?'needs-refresh':''}">
+ <div class="tactic-head"><div><span class="eyebrow">TÁTICA ATUAL · SLOT ${s.slotNumber}</span><h3>${esc(s.teamName)} × ${esc(s.opponent.teamName)}</h3><p class="small ${near?'warn-text':'muted'}">${near?'⚠ Confirme se o rival mudou':'✓ Tática pronta'} · ${esc(opponentReadTextV59(s))}</p></div></div>
+ ${tacticVisualHtmlV60(s.tactic)}
+ <div class="actions"><button class="btn" onclick="refreshTacticFromSavedDataV59(${s.slotNumber})">Recalcular com dados atuais</button><button class="btn secondary" onclick="openTacticVideoRefreshV59(${s.slotNumber})">Reanalisar por vídeo</button><button class="btn secondary" onclick="manualTacticModal(${s.slotNumber})">Editar</button></div></div>`;
 }
 
 Object.assign(window,{refreshTacticFromSavedDataV59,openTacticVideoRefreshV59,applyCalendarAnchorV54,showView,setSelectedSlot,prepareReanalysis,configureSlot,saveSlotConfigV5,openCalendarForSlot,finishCompetition,confirmFinish,slotDetailModal,generateTacticForSlot,tacticModal,manualTacticModal,saveManualTactic,strong433Modal,generateStrong433,resultModal,saveResultV52,runSetupStep,scheduleModal,saveSchedule,downloadIcs,openMarketSnapshot,aiStrategyReview,strategyModal,renderInfo,updateEventIntel,rosterTransactionModal,saveRosterTransaction,saveVideoResultPosition,saveApiKey,clearApiKey,closeModal});
