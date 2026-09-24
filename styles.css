@@ -50,3 +50,10 @@
 .position-chart{height:190px;display:flex;align-items:flex-end;gap:5px;padding:16px 6px 4px;border-left:1px solid var(--line);border-bottom:1px solid var(--line);overflow-x:auto}.pos-col{height:100%;min-width:28px;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:4px}.pos-bar{width:24px;min-height:12px;border-radius:7px 7px 2px 2px;background:linear-gradient(180deg,#37ddb0,#2383df);display:flex;align-items:flex-start;justify-content:center}.pos-bar span{font-size:9px;font-weight:900;padding-top:3px;color:#06111d}.pos-col small{font-size:8px;color:var(--muted)}
 .history-game{margin-bottom:8px}.market-strategy .plan-step{margin-bottom:7px}
 @media(max-width:640px){.calendar-row{font-size:12px}.position-chart{height:160px}.pos-col{min-width:24px}.pos-bar{width:20px}}
+
+.today-events{margin:12px 0}.today-events h3{margin:3px 0}.today-events .tiny{margin-top:8px}
+.calendar-row.overdue{border-color:#7d2b34;background:#2b1218}.calendar-row.overdue .calendar-status{color:#ff9ca6}.calendar-score{font-size:20px;color:#74e7bd}
+.btn.danger{background:#9e2f3d;color:#fff;border-color:#c54b59}.tactic-persistent.overdue{border-color:#8d3340;background:#1d1017}
+.quick-position{display:flex;gap:10px;align-items:end;margin-top:12px}.quick-position label{flex:1}.roster-scroll{overflow-x:auto}.roster-scroll table{min-width:620px}
+.today-events .event-now{margin-top:8px}.calendar-status{text-align:right;min-width:120px}
+@media(max-width:640px){.quick-position{flex-direction:column;align-items:stretch}.calendar-status{min-width:95px}.calendar-row{align-items:center}}

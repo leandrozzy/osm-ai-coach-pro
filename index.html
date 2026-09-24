@@ -7,7 +7,7 @@
   <meta name="description" content="OSM AI Coach Pro — análise por vídeo, táticas, mercado e histórico para 4 slots." />
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" href="icon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="styles.css?v=5.0.0" />
+  <link rel="stylesheet" href="styles.css?v=5.1.0" />
   <title>OSM AI Coach Pro</title>
 </head>
 <body>
@@ -16,7 +16,7 @@
       <div class="logo">O</div>
       <div>
         <h1>OSM AI Coach Pro</h1>
-        <p>Cloud · v5.0 · 4 slots</p>
+        <p>Cloud · v5.1 · 4 slots</p>
       </div>
     </div>
     <button id="apiButton" class="btn secondary">API Gemini</button>
@@ -35,6 +35,7 @@
   <main class="container">
     <section id="view-today" class="view active">
       <div id="nextAction" class="hero-card"></div>
+      <div id="todayEvents"></div>
       <div id="activeTacticPanel"></div>
       <div class="section-head">
         <div><span class="eyebrow">SEUS SLOTS</span><h2>Visão rápida</h2></div>
@@ -49,7 +50,7 @@
       </div>
       <div class="analysis-mode-picker">
         <button class="mode-btn active" data-analysis-mode="tactic"><b>⚽ Gerar tática</b><span>Partida, adversário e Data Analyst</span></button>
-        <button class="mode-btn" data-analysis-mode="market"><b>💰 Mercado</b><span>Elenco, treinamento e transferências</span></button>
+        <button class="mode-btn" data-analysis-mode="market"><b>👥 Elenco</b><span>Seu elenco, valores e treinamento</span></button>
         <button class="mode-btn" data-analysis-mode="calendar"><b>📅 Calendário</b><span>Próximos jogos e horários</span></button>
         <button class="mode-btn" data-analysis-mode="result"><b>📊 Resultado</b><span>Placar, estatísticas e cartões</span></button>
       </div>
@@ -131,6 +132,6 @@
   if ('serviceWorker' in navigator) navigator.serviceWorker.getRegistrations().then(rs=>rs.forEach(r=>r.unregister())).catch(()=>{});
   if ('caches' in window) caches.keys().then(keys=>Promise.all(keys.map(k=>caches.delete(k)))).catch(()=>{});
   </script>
-  <script src="app.js?v=4.9.0"></script>
+  <script src="app.js?v=5.1.0"></script>
 </body>
 </html>
