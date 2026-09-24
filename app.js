@@ -2191,3 +2191,188 @@ function persistentTacticHtml(s){
 
 Object.assign(window,{refreshTacticFromSavedDataV59,openTacticVideoRefreshV59,applyCalendarAnchorV54,showView,setSelectedSlot,prepareReanalysis,configureSlot,saveSlotConfigV5,openCalendarForSlot,finishCompetition,confirmFinish,slotDetailModal,generateTacticForSlot,tacticModal,manualTacticModal,saveManualTactic,strong433Modal,generateStrong433,resultModal,saveResultV52,runSetupStep,scheduleModal,saveSchedule,downloadIcs,openMarketSnapshot,aiStrategyReview,strategyModal,renderInfo,updateEventIntel,rosterTransactionModal,saveRosterTransaction,saveVideoResultPosition,saveApiKey,clearApiKey,closeModal});
 document.addEventListener('DOMContentLoaded',init);
+
+
+// ===== v6.1: campo de formação melhorado, por formação e alinhado ao gramado =====
+function formationRowsV61(formation){
+  const base = String(formation||'').replace(/[AB]\s*$/,'').trim();
+  const digits = (base.match(/\d+/g)||[]).map(n=>Number(n)).filter(Boolean);
+  if(!digits.length) return [4,3,3];
+  return digits;
+}
+function spacedXsV61(count, spread=1){
+  if(count<=1) return [60];
+  const minX = 60 - 34*spread;
+  const maxX = 60 + 34*spread;
+  const step = (maxX-minX)/(count-1);
+  return Array.from({length:count},(_,i)=>minX + step*i);
+}
+function formationVariantSpreadV61(formation, lineIndex, totalLines){
+  const f = String(formation||'');
+  const attackRow = 0;
+  const defendRow = totalLines-1;
+  if(/ A$/i.test(f)){
+    if(lineIndex===attackRow) return 1.04;
+    if(lineIndex===defendRow) return .90;
+    return .97;
+  }
+  if(/ B$/i.test(f)){
+    if(lineIndex===attackRow) return .90;
+    if(lineIndex===defendRow) return 1.00;
+    return .95;
+  }
+  return .96;
+}
+function formationCoordsV61(formation){
+  const rows = formationRowsV61(formation);
+  const total = rows.length;
+  const top = 16, bottom = 74;
+  const ys = total===1 ? [45] : Array.from({length:total}, (_,i)=> top + ((bottom-top)/(total-1))*i);
+  const points = [];
+  rows.forEach((count, idx)=>{
+    const spread = formationVariantSpreadV61(formation, idx, total);
+    let xs = spacedXsV61(count, spread);
+    // formação com 1 atacante: centralizar mais baixo no último terço ofensivo
+    if(count===1 && idx===0) xs = [60];
+    xs.forEach(x=> points.push({x, y: ys[idx], role:'line'}));
+  });
+  points.push({x:60,y:86,role:'gk'});
+  return points;
+}
+function formationPitchHtmlV61(formation){
+  const pts = formationCoordsV61(formation);
+  const circles = pts.map((p,i)=>{
+    const cls = p.role==='gk' ? 'player-dot gk' : 'player-dot';
+    const r = p.role==='gk' ? 4.5 : 4;
+    return `<circle class="${cls}" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${r}"></circle>`;
+  }).join('');
+  return `<div class="formation-pitch">
+    <svg viewBox="0 0 120 92" class="formation-svg" aria-label="Formação ${esc(formation)}">
+      <defs>
+        <linearGradient id="grassGradV61" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stop-color="#35aa35"/>
+          <stop offset="100%" stop-color="#137f23"/>
+        </linearGradient>
+      </defs>
+      <polygon points="12,5 108,5 118,88 2,88" fill="url(#grassGradV61)" stroke="#baf5a8" stroke-width="2"/>
+      <line x1="18" y1="46" x2="102" y2="46" stroke="#defbd8" stroke-width="1.8"/>
+      <circle cx="60" cy="46" r="8" fill="none" stroke="#defbd8" stroke-width="1.6"/>
+      <rect x="39" y="5" width="42" height="13" fill="none" stroke="#defbd8" stroke-width="1.5"/>
+      <rect x="48" y="5" width="24" height="7" fill="none" stroke="#defbd8" stroke-width="1.2"/>
+      <rect x="39" y="75" width="42" height="13" fill="none" stroke="#defbd8" stroke-width="1.5"/>
+      <rect x="48" y="81" width="24" height="7" fill="none" stroke="#defbd8" stroke-width="1.2"/>
+      ${circles}
+    </svg>
+  </div>`;
+}
+function tacticVisualHtmlV60(t){
+ if(!t)return '';
+ return `<div class="osm-tactic-ui">
+  <div class="osm-tactic-top">
+   <div class="osm-formation"><span>Formação</span><b>${esc(t.formation)}</b>${formationPitchHtmlV61(t.formation)}</div>
+   <div class="osm-plan"><span>Estilo de jogo</span><b>${esc(t.gamePlan)}</b><div class="plan-symbol">${esc(planSymbolV60(t.gamePlan))}</div></div>
+   <div class="osm-tackle"><span>Desarme</span><b>${esc(t.tackling)}</b><div class="ref-icon">🧑‍⚖️</div></div>
+  </div>
+
+  <div class="osm-sector-wrap">
+   <div class="sector-pitch">
+    <div class="sector-line forwards"><strong>${tacticVisualArrowV60('attack',t.attackInstruction)}</strong><span>Avançados</span></div>
+    <div class="sector-line mids"><strong>${tacticVisualArrowV60('mid',t.midfieldInstruction)}</strong><span>Médios</span></div>
+    <div class="sector-line defs"><strong>${tacticVisualArrowV60('def',t.defenceInstruction)}</strong><span>Defesas</span></div>
+   </div>
+   <div class="sector-values">
+    <div><small>Avançados</small><b>${esc(t.attackInstruction)}</b></div>
+    <div><small>Médios</small><b>${esc(t.midfieldInstruction)}</b></div>
+    <div><small>Defesas</small><b>${esc(t.defenceInstruction)}</b></div>
+   </div>
+  </div>
+
+  <div class="osm-sliders">
+   ${tacticSliderV60('Pressão',t.pressure)}
+   ${tacticSliderV60('Estilo',t.mentality)}
+   ${tacticSliderV60('Temporização',t.tempo)}
+  </div>
+
+  <div class="osm-bottom">
+   <div><span>Marcação</span><b>${esc(t.marking)}</b><div class="player-icon">⚽👤</div></div>
+   <div><span>Fazer fora-de-jogo</span><b>${esc(t.offside)}</b><div class="player-icon">🚩</div></div>
+  </div>
+ </div>`;
+}
+
+
+// ===== v6.2 visual overhaul: ícones e desenhos táticos =====
+function sectorArrowSvgV62(kind,text){
+  const x = normalize(text);
+  let path = 'M16 26 L16 8 M16 8 L9 15 M16 8 L23 15';
+  let color = '#70ddff';
+  if(kind==='attack'){
+    color = x.includes('def') ? '#ff9f79' : (x.includes('meio') ? '#8ee0ff' : '#70ddff');
+    path = x.includes('def') ? 'M16 6 L16 24 M16 24 L9 17 M16 24 L23 17' : (x.includes('meio') ? 'M9 16 L23 16 M16 9 L23 16 M16 23 L23 16 M16 9 L9 16 M16 23 L9 16' : 'M16 26 L16 8 M16 8 L9 15 M16 8 L23 15');
+  } else if(kind==='mid'){
+    color = x.includes('def') ? '#ffd772' : (x.includes('pression') || x.includes('frente') ? '#70ddff' : '#b9f7ab');
+    path = x.includes('def') ? 'M16 6 L16 24 M16 24 L9 17 M16 24 L23 17' : ((x.includes('pression') || x.includes('frente')) ? 'M16 26 L16 8 M16 8 L9 15 M16 8 L23 15' : 'M6 16 L26 16 M6 16 L13 9 M6 16 L13 23 M26 16 L19 9 M26 16 L19 23');
+  } else {
+    color = x.includes('atac') ? '#70ddff' : (x.includes('meio') ? '#b9f7ab' : '#ff9f79');
+    path = x.includes('atac') ? 'M16 26 L16 8 M16 8 L9 15 M16 8 L23 15' : (x.includes('meio') ? 'M16 26 L16 8 M16 8 L9 15 M16 8 L23 15 M16 17 L25 17' : 'M16 6 L16 24 M16 24 L9 17 M16 24 L23 17');
+  }
+  return `<span class="sector-chip ${kind}"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="${path}" fill="none" stroke="${color}" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>`;
+}
+function planVisualHtmlV62(plan){
+  const pitch = '<rect x="3" y="3" width="154" height="74" rx="8" fill="url(#g62)" stroke="#bff8af" stroke-width="2"/><line x1="80" y1="3" x2="80" y2="77" stroke="#efffe8" stroke-width="1.6"/><circle cx="80" cy="40" r="10" fill="none" stroke="#efffe8" stroke-width="1.6"/><rect x="3" y="24" width="18" height="32" fill="none" stroke="#efffe8" stroke-width="1.6"/><rect x="139" y="24" width="18" height="32" fill="none" stroke="#efffe8" stroke-width="1.6"/>';
+  const defs = '<defs><linearGradient id="g62" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#1cab36"/><stop offset="100%" stop-color="#137f26"/></linearGradient></defs>';
+  let body='';
+  switch(plan){
+    case 'Jogar pelas alas':
+      body = `${pitch}<circle class="plan-player" cx="54" cy="18" r="4.5"/><circle class="plan-player" cx="54" cy="61" r="4.5"/><circle class="plan-ball" cx="78" cy="40" r="5"/><path class="plan-path" d="M78 40 C62 36,56 28,52 19"/><path class="plan-path" d="M78 40 C62 44,56 52,52 61"/><path class="plan-shot" d="M52 19 C28 21,19 21,12 18"/><path class="plan-shot" d="M52 61 C28 59,19 59,12 62"/><rect class="plan-goal" x="0.5" y="29" width="6" height="22"/>`;
+      break;
+    case 'Jogo de passes':
+      body = `${pitch}<circle class="plan-ball" cx="119" cy="40" r="5"/><circle class="plan-player" cx="116" cy="20" r="4.5"/><circle class="plan-player" cx="96" cy="40" r="4.5"/><circle class="plan-player" cx="76" cy="58" r="4.5"/><circle class="plan-player" cx="56" cy="38" r="4.5"/><path class="plan-pass" d="M116 20 C108 25,104 30,96 40"/><path class="plan-pass" d="M96 40 C88 48,84 53,76 58"/><path class="plan-pass" d="M76 58 C68 51,64 45,56 38"/><path class="plan-pass" d="M56 38 C72 38,90 39,119 40"/>`;
+      break;
+    case 'Bola longa':
+      body = `${pitch}<circle class="plan-player" cx="126" cy="40" r="4.5"/><circle class="plan-ball" cx="28" cy="55" r="5"/><path class="plan-shot" d="M28 55 C54 30,87 21,126 40"/><path class="plan-pass" d="M20 58 C18 50,16 43,14 35"/>`;
+      break;
+    case 'Contra-ataque':
+      body = `${pitch}<circle class="plan-player" cx="124" cy="20" r="4.5"/><circle class="plan-player" cx="124" cy="58" r="4.5"/><circle class="plan-ball" cx="70" cy="40" r="5"/><path class="plan-path" d="M70 40 C88 34,102 28,121 20"/><path class="plan-path" d="M70 40 C88 46,102 52,121 58"/><path class="plan-pass" d="M48 40 C57 40,61 40,70 40"/>`;
+      break;
+    case 'Remate à vista':
+    default:
+      body = `${pitch}<circle class="plan-player" cx="112" cy="40" r="4.5"/><circle class="plan-ball" cx="104" cy="40" r="5"/><path class="plan-shot" d="M104 40 C74 40,44 40,12 40"/><rect class="plan-goal" x="0.5" y="29" width="6" height="22"/>`;
+      break;
+  }
+  return `<div class="plan-visual"><svg viewBox="0 0 160 80" role="img" aria-label="Plano ${esc(plan)}">${defs}${body}</svg></div>`;
+}
+function tacticVisualHtmlV60(t){
+ if(!t)return '';
+ return `<div class="osm-tactic-ui">
+  <div class="osm-tactic-top">
+   <div class="osm-formation"><span>Formação</span><b>${esc(t.formation)}</b>${formationPitchHtmlV61(t.formation)}</div>
+   <div class="osm-plan"><span>Estilo de jogo</span><b>${esc(t.gamePlan)}</b>${planVisualHtmlV62(t.gamePlan)}</div>
+   <div class="osm-tackle"><span>Desarme</span><b>${esc(t.tackling)}</b><div class="ref-icon">🧑‍⚖️</div></div>
+  </div>
+
+  <div class="osm-sector-wrap">
+   <div class="sector-pitch">
+    <div class="sector-line forwards"><strong>${sectorArrowSvgV62('attack',t.attackInstruction)}</strong><span>Avançados</span></div>
+    <div class="sector-line mids"><strong>${sectorArrowSvgV62('mid',t.midfieldInstruction)}</strong><span>Médios</span></div>
+    <div class="sector-line defs"><strong>${sectorArrowSvgV62('def',t.defenceInstruction)}</strong><span>Defesas</span></div>
+   </div>
+   <div class="sector-values">
+    <div><small>Avançados</small><b>${esc(t.attackInstruction)}</b></div>
+    <div><small>Médios</small><b>${esc(t.midfieldInstruction)}</b></div>
+    <div><small>Defesas</small><b>${esc(t.defenceInstruction)}</b></div>
+   </div>
+  </div>
+
+  <div class="osm-sliders">
+   ${tacticSliderV60('Pressão',t.pressure)}
+   ${tacticSliderV60('Estilo',t.mentality)}
+   ${tacticSliderV60('Temporização',t.tempo)}
+  </div>
+
+  <div class="osm-bottom">
+   <div><span>Marcação</span><b>${esc(t.marking)}</b><div class="player-icon">⚽👤</div></div>
+   <div><span>Fazer fora-de-jogo</span><b>${esc(t.offside)}</b><div class="player-icon">🚩</div></div>
+  </div>
+ </div>`;
+}
