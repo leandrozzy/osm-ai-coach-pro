@@ -20,6 +20,7 @@ function saveSettingsObj(){localStorage.setItem(SETTINGS_KEY,JSON.stringify(sett
 function deepMerge(target,source){if(!source||typeof source!=='object')return target;for(const [k,v] of Object.entries(source)){if(v&&typeof v==='object'&&!Array.isArray(v)&&target[k]&&typeof target[k]==='object'&&!Array.isArray(target[k]))target[k]=deepMerge({...target[k]},v);else target[k]=v}return target}
 function esc(v){return String(v??'NI').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
 function fmtMoney(v){if(v===null||v===undefined||v==='')return 'NI';const n=Number(v);if(!Number.isFinite(n))return esc(v);return Intl.NumberFormat('pt-BR',{notation:'compact',maximumFractionDigits:1}).format(n)}
+function formatMoney(v){return fmtMoney(v)}
 function fmtDateTime(v){if(!v)return 'Horário NI';const d=new Date(v);return Number.isNaN(d.getTime())?'Horário NI':d.toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}
 function nowIso(){return new Date().toISOString()}
 function toast(msg){els.toast.textContent=msg;els.toast.classList.add('show');clearTimeout(toast.t);toast.t=setTimeout(()=>els.toast.classList.remove('show'),3200)}
@@ -1503,6 +1504,7 @@ async function applyResultVideoV54(r,slotNumber){
 }
 
 async function handleFiles(files){
+ runtimeCheckV56();
  if(!files.length)return;
  if(!localStorage.getItem(API_KEY_STORAGE)){apiModal('Antes de analisar, salve sua chave Gemini.');return}
  if(activeAnalysisJobV54?.status==='busy'){toast(`Já existe uma leitura em andamento no Slot ${activeAnalysisJobV54.slot}`);return}
@@ -1527,7 +1529,7 @@ async function handleFiles(files){
    if(jobSlot===selectedSlot&&analysisMode===jobMode)renderFramePreview(frames.slice(0,8));
    setProgress(18,`OCR local em ${frames.length} quadros…`);const ocr=await runLocalOcr(frames);
    if(jobMode==='tactic'){
-    const selected=selectRequiredTacticFrames(frames,ocr);
+    const selected=await selectRequiredTacticFramesRobustV56(frames,ocr,jobSlot);
     if(jobSlot===selectedSlot&&analysisMode===jobMode)renderRequiredTacticPreview(selected);
     const requiredFrames=assertAllRequiredTacticScreens(selected);setProgress(60,'Gerando tática…');
     result=await analyzeOcrPackage(ocr,requiredFrames);applyVisionResult(result);applyRecommendedTactics(result);
@@ -1538,7 +1540,7 @@ async function handleFiles(files){
     if(jobSlot===selectedSlot&&analysisMode===jobMode)renderResultVideo(result);
    }else{
     const evidence=selectVisualEvidence(frames,evidenceLimitForMode(jobMode));setProgress(58,'Lendo elenco e posições…');
-    result=await analyzeOcrPackage(ocr,evidence);applyVisionResult(result);const ss=state.slots[jobSlot-1];ss.lastRosterSnapshotAt=nowIso();recalculateSquadValue(ss);ss.market=[];
+    result=await analyzeOcrPackage(ocr,evidence);applyVisionResult(result);const ss=state.slots[jobSlot-1];ss.roster=(ss.roster||[]).map(p=>({...p,sector:normalizeRosterSectorV55(p),training:p.training===true}));ss.lastRosterSnapshotAt=nowIso();recalculateSquadValue(ss);ss.market=[];
     if(jobSlot===selectedSlot&&analysisMode===jobMode)renderAnalysisResult(result);
    }
   }
@@ -1672,6 +1674,70 @@ function calendarStatusV54(x,s,i){
  if(!s.calendarAnchorAt||!x.dateTime)return `<span class="muted">Aguardando data/hora</span>`;
  if(new Date(x.dateTime).getTime()<=Date.now())return x.tacticSnapshot?`<button class="btn tiny danger" onclick="resultModal(${s.slotNumber},${i})">Registrar resultado</button>`:`<span class="warn-text">Horário passou · sem tática registrada</span>`;
  return `<span class="future-label">Agendado</span>`;
+}
+
+
+// ===== v5.6: validação global + seleção visual IA das 6 telas =====
+function runtimeCheckV56(){
+ const required=['fmtMoney','formatMoney','geminiJson','runLocalOcr','extractVideoFramesFast','analyzeOcrPackage','applyVisionResult','saveState'];
+ const missing=required.filter(n=>typeof globalThis[n]!=='function');
+ if(missing.length)throw new Error(`Falha interna do app: ${missing.join(', ')}. Atualize a página.`);
+ return true;
+}
+function showGlobalErrorV56(message){
+ try{
+  const b=document.getElementById('globalJobBanner');
+  if(b){b.className='global-job error';b.innerHTML=`<div><b>Erro interno</b><span>${esc(message)}</span></div><strong>!</strong>`;}
+ }catch{}
+}
+window.addEventListener('error',e=>showGlobalErrorV56(e.message||'Erro JavaScript'));
+window.addEventListener('unhandledrejection',e=>showGlobalErrorV56(e.reason?.message||String(e.reason||'Erro assíncrono')));
+
+async function classifyTacticFramesV56(frames,ocr,slotNumber){
+ const s=state.slots[slotNumber-1]||{};
+ const parts=[{text:`Você é um classificador VISUAL de telas do OSM 26. Receberá quadros numerados do mesmo vídeo e OCR de apoio. Escolha EXATAMENTE UM quadro diferente para cada categoria obrigatória abaixo. Não use o mesmo quadro em duas categorias.
+
+CATEGORIAS:
+match_overview = tela principal da partida, com dois times/escudos, força, VS e árbitro.
+my_squad = tela do MEU elenco, tabela branca e força por setor. Meu time é ${s.teamName||'NI'} e meu nick é ${settings.userNick||'leandrozzy'}.
+opponent_squad = tela do elenco do ADVERSÁRIO, tabela branca e força por setor. Adversário atual: ${s.opponent?.teamName||'NI'}.
+analyst_report = Data Analyst com folha/papel à esquerda contendo texto do relatório, estágio/nível do estádio etc.
+analyst_plan = Data Analyst com desenho tático/setas vermelhas OU texto do plano de jogo, mais marcação e fora-de-jogo.
+analyst_formation = Data Analyst mostrando claramente a FORMAÇÃO no campo verde, normalmente com jogadores/nomes/suplentes.
+
+IMPORTANTE:
+- Olhe o layout e os elementos gráficos; NÃO dependa só do OCR.
+- analyst_plan e analyst_formation são telas diferentes.
+- match_overview não é tela de elenco.
+- Se uma categoria realmente não existir, use null. Se estiver presente mesmo com texto ruim, escolha o quadro.
+- Retorne apenas JSON com índices 1-based: {"match_overview":1,"my_squad":2,"opponent_squad":3,"analyst_report":4,"analyst_plan":5,"analyst_formation":6,"confidence":0.0}.
+
+OCR de apoio por quadro:\n${ocr.joined}`}];
+ frames.forEach((f,i)=>parts.push({text:`QUADRO ${i+1}`},{inlineData:{mimeType:f.mimeType,data:f.base64}}));
+ return geminiJson(parts,{temperature:.01,maxOutputTokens:1200});
+}
+function tacticSelectionFromMapV56(map,frames,ocr){
+ const labels={match_overview:'1. Tela da partida',my_squad:'2. Meu elenco / força por setor',opponent_squad:'3. Elenco do adversário / força por setor',analyst_report:'4. Analista — relatório',analyst_plan:'5. Analista — plano, marcação e impedimento',analyst_formation:'6. Analista — formação'};
+ const used=new Set(),items=[];
+ for(const key of Object.keys(labels)){
+  const idx=Number(map?.[key]);
+  if(Number.isInteger(idx)&&idx>=1&&idx<=frames.length&&!used.has(idx)){
+   used.add(idx);const o=(ocr.frames||[]).find(x=>Number(x.frame)===idx);
+   items.push({type:key,label:labels[key],frame:frames[idx-1],text:o?.text||'',score:100});
+  }else items.push({type:key,label:labels[key],frame:null,text:null,score:0});
+ }
+ ocr.required=items.reduce((a,x)=>{a[x.type]=x.text||null;return a},{});
+ ocr.missingRequired=items.filter(x=>!x.frame).map(x=>x.label);
+ return items;
+}
+async function selectRequiredTacticFramesRobustV56(frames,ocr,slotNumber){
+ try{
+  setProgress(47,'Identificando visualmente as 6 telas…');
+  const map=await classifyTacticFramesV56(frames,ocr,slotNumber);
+  const ai=tacticSelectionFromMapV56(map,frames,ocr);
+  if(ai.filter(x=>x.frame).length>=5)return ai;
+ }catch(e){console.warn('Classificação visual falhou; usando classificador local',e)}
+ return selectRequiredTacticFrames(frames,ocr);
 }
 
 Object.assign(window,{applyCalendarAnchorV54,showView,setSelectedSlot,prepareReanalysis,configureSlot,saveSlotConfigV5,openCalendarForSlot,finishCompetition,confirmFinish,slotDetailModal,generateTacticForSlot,tacticModal,manualTacticModal,saveManualTactic,strong433Modal,generateStrong433,resultModal,saveResultV52,runSetupStep,scheduleModal,saveSchedule,downloadIcs,openMarketSnapshot,aiStrategyReview,strategyModal,renderInfo,updateEventIntel,rosterTransactionModal,saveRosterTransaction,saveVideoResultPosition,saveApiKey,clearApiKey,closeModal});

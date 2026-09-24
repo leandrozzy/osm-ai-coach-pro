@@ -82,3 +82,6 @@
 }
 
 .roster-group{margin-top:14px;padding-top:10px;border-top:1px solid #17304b}.roster-group h4{margin:0 0 7px}.roster-list{display:grid;gap:6px}.roster-row{display:grid;grid-template-columns:minmax(120px,1fr) minmax(150px,1fr) auto;gap:8px;align-items:center;padding:8px 9px;background:#091725;border-radius:9px}.roster-row span{font-size:11px;color:var(--muted)}.roster-row em{font-size:10px;color:#ffb052;font-style:normal;font-weight:800}.calendar-result{display:inline-flex;gap:4px;align-items:center}.calendar-result.win b{color:#59e698}.calendar-result.draw b{color:#ffd66d}.calendar-result.loss b{color:#ff7d8c}@media(max-width:640px){.roster-row{grid-template-columns:1fr}.roster-row em{justify-self:start}}
+
+/* v5.6 */
+.global-job.error{background:#551e28!important;color:#ffd9dc!important}.required-card.ok img{object-fit:cover}.required-card.missing{background:#241317}

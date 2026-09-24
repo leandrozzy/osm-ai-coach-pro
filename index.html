@@ -7,7 +7,7 @@
   <meta name="description" content="OSM AI Coach Pro — análise por vídeo, táticas, mercado e histórico para 4 slots." />
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" href="icon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="styles.css?v=5.5.0" />
+  <link rel="stylesheet" href="styles.css?v=5.6.0" />
   <title>OSM AI Coach Pro</title>
 </head>
 <body>
@@ -16,7 +16,7 @@
       <div class="logo">O</div>
       <div>
         <h1>OSM AI Coach Pro</h1>
-        <p>Cloud · v5.5 · 4 slots</p>
+        <p>Cloud · v5.6 · 4 slots</p>
       </div>
     </div>
     <button id="apiButton" class="btn secondary">API Gemini</button>
@@ -133,6 +133,6 @@
   if ('serviceWorker' in navigator) navigator.serviceWorker.getRegistrations().then(rs=>rs.forEach(r=>r.unregister())).catch(()=>{});
   if ('caches' in window) caches.keys().then(keys=>Promise.all(keys.map(k=>caches.delete(k)))).catch(()=>{});
   </script>
-  <script src="app.js?v=5.5.0"></script>
+  <script src="app.js?v=5.6.0"></script>
 </body>
 </html>
