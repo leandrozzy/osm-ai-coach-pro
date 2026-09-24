@@ -28,3 +28,6 @@
  .slot-switcher{top:112px;padding:6px 8px}.slot-chip{padding:6px 3px}.slot-chip small{font-size:8px}
  .tactic-persistent{padding:13px}.persistent-table td{padding:7px 5px;font-size:13px}
 }
+
+.scene-note{font-size:11px;color:var(--muted);margin-top:6px}
+.media-preview img{flex:0 0 130px}

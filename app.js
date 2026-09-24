@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION='4.4.0-cloud-slot-ocr';
+const APP_VERSION='4.5.0-cloud-scene-ocr';
 const STATE_KEY='osm_ai_coach_pro_state_v4';
 const SETTINGS_KEY='osm_ai_coach_pro_settings_v4';
 const API_KEY_STORAGE='osm_ai_coach_pro_gemini_key';
@@ -92,7 +92,7 @@ async function handleFiles(files){
      setProgress(20,'Lendo texto localmente com OCR…');
      const ocr=await runLocalOcr(frames);
      setProgress(55,'Montando os campos para a IA…');
-     const evidence=selectVisualEvidence(frames,3);
+     const evidence=selectVisualEvidence(frames,analysisMode==='tactic'?4:3);
      result=await analyzeOcrPackage(ocr,evidence);
    }else if(images.length){
      setProgress(10,'Preparando imagens…');
@@ -101,7 +101,7 @@ async function handleFiles(files){
      renderFramePreview(frames.slice(0,6));
      setProgress(28,'Lendo texto localmente com OCR…');
      const ocr=await runLocalOcr(frames.slice(0,8));
-     result=await analyzeOcrPackage(ocr,selectVisualEvidence(frames,3));
+     result=await analyzeOcrPackage(ocr,selectVisualEvidence(frames,analysisMode==='tactic'?4:3));
    }else throw new Error('Selecione um vídeo ou imagens do OSM.');
 
    setProgress(78,'Atualizando o slot…');
@@ -268,10 +268,71 @@ function fileToDataUrl(file){return new Promise((res,rej)=>{const r=new FileRead
 function loadImage(src){return new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=src})}
 async function extractVideoFrames(file){const url=URL.createObjectURL(file);const v=document.createElement('video');v.src=url;v.muted=true;v.playsInline=true;v.preload='metadata';await new Promise((res,rej)=>{v.onloadedmetadata=res;v.onerror=()=>rej(new Error(`Não consegui abrir ${file.name}`))});const dur=Math.max(.1,v.duration||1);const maxCandidates=54;const step=Math.max(.7,dur/maxCandidates);const out=[];let prev=null;let i=0;for(let t=.08;t<dur;t+=step){await seekVideo(v,Math.min(t,dur-.05));const frame=captureVideoFrame(v,t,file.name);const thumb=frame.thumb;const diff=prev?pixelDiff(prev,thumb):100;prev=thumb;if(diff>=6||i%5===0||t+step>=dur){frame.score=diff;out.push(frame)}i++;if(i>maxCandidates+4)break}URL.revokeObjectURL(url);return out}
 function seekVideo(v,t){return new Promise(res=>{let done=false;const finish=()=>{if(done)return;done=true;v.removeEventListener('seeked',finish);res()};v.addEventListener('seeked',finish,{once:true});v.currentTime=t;setTimeout(finish,900)})}
-function captureVideoFrame(v,t,name){const maxW=1280,scale=Math.min(1,maxW/(v.videoWidth||maxW));const w=Math.max(320,Math.round((v.videoWidth||1280)*scale)),h=Math.max(180,Math.round((v.videoHeight||720)*scale));const c=document.createElement('canvas');c.width=w;c.height=h;const x=c.getContext('2d');x.drawImage(v,0,0,w,h);const dataUrl=c.toDataURL('image/jpeg',.74);const tc=document.createElement('canvas');tc.width=64;tc.height=36;tc.getContext('2d').drawImage(v,0,0,64,36);const data=tc.getContext('2d').getImageData(0,0,64,36).data;const thumb=new Uint8Array(64*36);for(let i=0,j=0;i<data.length;i+=4,j++)thumb[j]=Math.round((data[i]+data[i+1]+data[i+2])/3);return {dataUrl,base64:dataUrl.split(',')[1],mimeType:'image/jpeg',time:t,name,thumb,score:0}}
+function captureVideoFrame(v,t,name){
+ const maxW=1280,scale=Math.min(1,maxW/(v.videoWidth||maxW));
+ const w=Math.max(320,Math.round((v.videoWidth||1280)*scale)),h=Math.max(180,Math.round((v.videoHeight||720)*scale));
+ const c=document.createElement('canvas');c.width=w;c.height=h;const x=c.getContext('2d');x.drawImage(v,0,0,w,h);
+ const dataUrl=c.toDataURL('image/jpeg',.8);
+ const tc=document.createElement('canvas');tc.width=80;tc.height=45;const tx=tc.getContext('2d');tx.drawImage(v,0,0,80,45);
+ const data=tx.getImageData(0,0,80,45).data;
+ const thumb=new Uint8Array(80*45),hist=new Uint16Array(16);
+ let bright=0,sat=0;
+ for(let i=0,j=0;i<data.length;i+=4,j++){
+   const r=data[i],g=data[i+1],b=data[i+2],gray=Math.round((r+g+b)/3);
+   thumb[j]=gray;hist[Math.min(15,Math.floor(gray/16))]++;bright+=gray;
+   const mx=Math.max(r,g,b),mn=Math.min(r,g,b);sat+=mx-mn;
+ }
+ const count=80*45;
+ return {dataUrl,base64:dataUrl.split(',')[1],mimeType:'image/jpeg',time:t,name,thumb,hist,
+   brightness:bright/count,saturation:sat/count,score:0};
+}
 function canvasFrameFromImage(img,t,name){const maxW=1280,scale=Math.min(1,maxW/img.naturalWidth);const w=Math.round(img.naturalWidth*scale),h=Math.round(img.naturalHeight*scale);const c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').drawImage(img,0,0,w,h);const dataUrl=c.toDataURL('image/jpeg',.8);return {dataUrl,base64:dataUrl.split(',')[1],mimeType:'image/jpeg',time:t,name,score:100}}
 function pixelDiff(a,b){if(!a||!b||a.length!==b.length)return 100;let s=0;for(let i=0;i<a.length;i++)s+=Math.abs(a[i]-b[i]);return s/a.length}
-function dedupeFrames(frames,max){if(frames.length<=max)return frames.sort((a,b)=>(a.time||0)-(b.time||0));const keep=[];const byScore=[...frames].sort((a,b)=>(b.score||0)-(a.score||0));for(const f of byScore){if(keep.length>=max)break;if(!keep.some(k=>k.name===f.name&&Math.abs((k.time||0)-(f.time||0))<1.2))keep.push(f)}return keep.sort((a,b)=>a.name.localeCompare(b.name)||(a.time||0)-(b.time||0))}
+function histDiff(a,b){if(!a||!b)return 100;let s=0,tot=0;for(let i=0;i<a.length;i++){s+=Math.abs(a[i]-b[i]);tot+=Math.max(a[i],b[i])}return tot?100*s/tot:0}
+function frameDistance(a,b){
+ if(!a||!b)return 100;
+ const p=pixelDiff(a.thumb,b.thumb);
+ const h=histDiff(a.hist,b.hist);
+ const br=Math.abs((a.brightness||0)-(b.brightness||0));
+ const st=Math.abs((a.saturation||0)-(b.saturation||0));
+ return p*.58+h*.22+br*.12+st*.08;
+}
+function scenePriority(f){
+ let p=f.score||0;
+ // Telas de relatório/lista do OSM tendem a ter brilho maior e saturação menor que o estádio.
+ if((f.brightness||0)>135)p+=12;
+ if((f.saturation||0)<45)p+=8;
+ return p;
+}
+function chooseDiverseFrames(frames,max){
+ if(frames.length<=max)return [...frames].sort((a,b)=>(a.time||0)-(b.time||0));
+ const sorted=[...frames].sort((a,b)=>(a.time||0)-(b.time||0));
+ const picked=[];
+ // 1) cobertura temporal obrigatória: um representante por faixa
+ const bins=Math.min(max,12),dur=(sorted.at(-1)?.time||1)-(sorted[0]?.time||0)||1;
+ for(let b=0;b<bins;b++){
+   const lo=(sorted[0]?.time||0)+dur*b/bins,hi=(sorted[0]?.time||0)+dur*(b+1)/bins;
+   const group=sorted.filter(f=>(f.time||0)>=lo&&(f.time||0)<=hi);
+   if(!group.length)continue;
+   const best=[...group].sort((a,b)=>scenePriority(b)-scenePriority(a))[0];
+   if(best&&!picked.includes(best))picked.push(best);
+ }
+ // 2) diversidade visual máxima (farthest point)
+ while(picked.length<max){
+   let best=null,bestScore=-1;
+   for(const f of sorted){
+     if(picked.includes(f))continue;
+     const minD=picked.length?Math.min(...picked.map(p=>frameDistance(f,p))):100;
+     const score=minD+scenePriority(f)*.18;
+     if(score>bestScore){best=f;bestScore=score}
+   }
+   if(!best)break;
+   if(picked.length>=4 && Math.min(...picked.map(p=>frameDistance(best,p)))<7)break;
+   picked.push(best);
+ }
+ return picked.sort((a,b)=>(a.time||0)-(b.time||0)).slice(0,max);
+}
+function dedupeFrames(frames,max){return chooseDiverseFrames(frames,max)}
 function renderFramePreview(frames){els.mediaPreview.innerHTML=frames.slice(0,12).map(f=>`<img src="${f.dataUrl}" title="${esc(f.name)} ${Math.round(f.time||0)}s">`).join('')}
 
 
@@ -293,11 +354,12 @@ TAREFA:
 1. Estruture os dados da partida sem inventar nada.
 2. Identifique meu time/rival, força geral, GOL/DEF/MEI/ATA quando visível, casa/fora, árbitro, humano/CPU, bônus, CT/treino secreto, estádio e horário.
 3. Do Data Analyst rival, extraia formação, estilo/plano, marcação e impedimento.
-4. Gere UMA tática final completa visando maximizar a chance de vitória.
-5. Se um dado não está claro no OCR nem nas imagens, use null.
-6. Não confunda a minha tática atual com a tática do rival.
-7. sliders pressure, mentality e tempo: inteiros 0–100.
-8. Considere também o histórico aprendido do slot, fornecido abaixo:
+4. Se o OCR contiver termos como Analista, Data Analyst, formação, marcação, fora de jogo/impedimento ou plano, trate esses trechos como prioridade máxima e não os descarte.
+5. Gere UMA tática final completa visando maximizar a chance de vitória.
+6. Se um dado não está claro no OCR nem nas imagens, use null.
+7. Não confunda a minha tática atual com a tática do rival.
+8. sliders pressure, mentality e tempo: inteiros 0–100.
+9. Considere também o histórico aprendido do slot, fornecido abaixo:
 ${JSON.stringify(baseKnown?buildLearningSummary(baseKnown):null)}
 
 RETORNE APENAS JSON:
@@ -688,22 +750,47 @@ function saveManualTactic(n){
  s.tacticFreshAt=nowIso();s.tacticNeedsRefresh=false;s.updatedAt=nowIso();saveState();closeModal();toast('Tática atualizada');
 }
 
-async function extractVideoFramesFast(file,maxFrames=12){
- const url=URL.createObjectURL(file),v=document.createElement('video');v.src=url;v.muted=true;v.playsInline=true;v.preload='metadata';
+async function extractVideoFramesFast(file,maxFrames=14){
+ const url=URL.createObjectURL(file),v=document.createElement('video');
+ v.src=url;v.muted=true;v.playsInline=true;v.preload='metadata';
  await new Promise((res,rej)=>{v.onloadedmetadata=res;v.onerror=()=>rej(new Error(`Não consegui abrir ${file.name}`))});
- const dur=Math.max(.2,v.duration||1),samples=analysisMode==='market'?Math.max(18,maxFrames):Math.max(12,maxFrames),times=[];
- for(let i=0;i<samples;i++)times.push(Math.min(dur-.08,Math.max(.08,(dur*(i+.35))/samples)));
- const frames=[];let prev=null;
- for(const t of times){
-  await seekVideo(v,t);const f=captureVideoFrame(v,t,file.name),d=prev?pixelDiff(prev,f.thumb):100;prev=f.thumb;f.score=d;
-  if(analysisMode==='market'||d>=2.2||frames.length<4)frames.push(f);
+ const dur=Math.max(.2,v.duration||1);
+ // Varredura densa: importante para não perder telas curtas do Data Analyst.
+ const step=dur<=20?.45:dur<=45?.65:.85;
+ const candidates=[];let prev=null;
+ for(let t=.08;t<dur;t+=step){
+   await seekVideo(v,Math.min(t,dur-.05));
+   const f=captureVideoFrame(v,t,file.name);
+   f.score=prev?frameDistance(f,prev):100;
+   candidates.push(f);prev=f;
+   if(candidates.length>120)break;
  }
  URL.revokeObjectURL(url);
- return dedupeFrames(frames,analysisMode==='market'?18:12);
+
+ // Criar cenas por mudança visual. Guarda o quadro central + o mais "relatório" de cada cena.
+ const scenes=[];let current=[];
+ for(const f of candidates){
+   if(!current.length){current=[f];continue}
+   const d=frameDistance(f,current[current.length-1]);
+   if(d>=10){
+     scenes.push(current);current=[f];
+   }else current.push(f);
+ }
+ if(current.length)scenes.push(current);
+
+ const reps=[];
+ for(const scene of scenes){
+   const mid=scene[Math.floor(scene.length/2)];
+   const report=[...scene].sort((a,b)=>scenePriority(b)-scenePriority(a))[0];
+   reps.push(mid);
+   if(report!==mid && frameDistance(mid,report)>=5)reps.push(report);
+ }
+ const limit=analysisMode==='market'?Math.max(18,maxFrames):Math.max(16,maxFrames);
+ return chooseDiverseFrames(reps,limit);
 }
 async function prepareOcrImage(dataUrl){
  const img=await loadImage(dataUrl);
- const scale=1.7,w=Math.round(img.width*scale),h=Math.round(img.height*scale);
+ const scale=1.45,w=Math.round(img.width*scale),h=Math.round(img.height*scale);
  const c=document.createElement('canvas');c.width=w;c.height=h*2;
  const x=c.getContext('2d');
  x.drawImage(img,0,0,w,h);
@@ -728,12 +815,15 @@ async function runLocalOcr(frames){
  }finally{if(worker)await worker.terminate()}
  return {mode:analysisMode,frames:results,joined:results.map(x=>`[Quadro ${x.frame} ~${x.time}s conf=${Math.round(x.confidence||0)}]\n${x.text}`).join('\n\n')};
 }
-function selectVisualEvidence(frames,n=3){
+function selectVisualEvidence(frames,n=4){
  if(!frames.length)return [];
- const picks=[],indices=[0,Math.floor((frames.length-1)/2),frames.length-1];
- for(const i of indices){const f=frames[i];if(f&&!picks.includes(f))picks.push(f)}
- const ranked=[...frames].sort((a,b)=>(b.score||0)-(a.score||0));
- for(const f of ranked){if(picks.length>=n)break;if(!picks.includes(f))picks.push(f)}
+ const picks=[];
+ const reportLike=[...frames].sort((a,b)=>scenePriority(b)-scenePriority(a));
+ for(const f of reportLike){if(picks.length>=Math.min(2,n))break;if(!picks.some(x=>frameDistance(x,f)<7))picks.push(f)}
+ const chronological=[frames[0],frames[Math.floor(frames.length/2)],frames[frames.length-1]].filter(Boolean);
+ for(const f of chronological){if(picks.length>=n)break;if(!picks.some(x=>frameDistance(x,f)<7))picks.push(f)}
+ const diverse=chooseDiverseFrames(frames,n*2);
+ for(const f of diverse){if(picks.length>=n)break;if(!picks.some(x=>frameDistance(x,f)<7))picks.push(f)}
  return picks.slice(0,n);
 }
 
