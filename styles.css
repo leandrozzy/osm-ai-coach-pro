@@ -637,3 +637,9 @@ button:hover,.btn:hover,.primary:hover,.secondary:hover{box-shadow:0 10px 24px r
 .tackle-normal svg{filter:drop-shadow(0 5px 10px rgba(255,213,107,.10))}
 .tackle-agressivo svg{filter:drop-shadow(0 5px 10px rgba(255,155,111,.16))}
 .tackle-extremo svg{filter:drop-shadow(0 5px 12px rgba(255,79,98,.20))}
+
+/* v6.7 - calendário ancorado pela primeira rodada lida do vídeo */
+.calendar-result.win{color:#77e7bd}
+.calendar-result.draw{color:#ffd772}
+.calendar-result.loss{color:#ff9ba7}
+.calendar-when b{white-space:normal}

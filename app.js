@@ -2694,3 +2694,295 @@ function tackleVisualHtmlV65(tackling){
     </div>
   </div>`;
 }
+
+
+// ===== v6.7: calendário usa a data inicial REAL lida do vídeo =====
+async function extractUniformFramesV54(file,count=6){
+  const url=URL.createObjectURL(file),v=document.createElement('video');
+  v.src=url;v.muted=true;v.playsInline=true;v.preload='metadata';
+  await new Promise((res,rej)=>{v.onloadedmetadata=res;v.onerror=()=>rej(new Error(`Não consegui abrir ${file.name}`))});
+  const dur=Math.max(.2,v.duration||1),out=[];
+  // Inclui obrigatoriamente começo e fim do vídeo para não perder a primeira rodada/data inicial.
+  const ratios=count<=1?[0.02]:Array.from({length:count},(_,i)=>i/(count-1));
+  for(const r of ratios){
+    const t=Math.min(dur-.05,Math.max(.03,dur*(r===0?0.01:r===1?0.99:r)));
+    await seekVideo(v,t);
+    out.push(captureVideoFrame(v,t,file.name));
+  }
+  URL.revokeObjectURL(url);
+  return out;
+}
+
+async function analyzeCalendarFramesV54(frames,slotNumber){
+ const s=state.slots[slotNumber-1];
+ const parts=[{text:`Você está lendo o CALENDÁRIO do OSM 26 em sequência temporal.
+
+OBJETIVO PRINCIPAL:
+1) Leia do próprio vídeo a DATA DA PRIMEIRA RODADA / PRIMEIRO JOGO exibido.
+2) Essa data é a âncora real do calendário. NÃO use a data de hoje, data do upload ou data do processamento.
+3) Se o calendário mostrar somente dia/mês, devolva exatamente DD/MM. Não invente ano.
+4) Se algum jogo individual mostrar data própria, devolva em dateText. Caso não mostre, deixe null.
+5) Se o primeiro jogo mostrar horário, extraia em firstRoundTimeText. Caso contrário, deixe null; o app usará o horário padrão configurado pelo usuário.
+
+REGRAS VISUAIS:
+- símbolo de casa/casinha à esquerda => venue="Casa";
+- sem casinha => venue="Fora";
+- símbolo de taça/troféu => competitionType="cup";
+- sem taça => competitionType="league";
+- V => vitória já ocorrida;
+- D => derrota já ocorrida;
+- E => empate já ocorrido;
+- placar numérico, por exemplo 2-2 ou 3-0 => partida já ocorrida;
+- partida sem V/D/E e sem placar => played=false;
+- preserve TODAS as partidas visíveis ao longo das imagens, sem duplicar a mesma rodada;
+- retorne em ordem cronológica;
+- extraia placar numérico quando legível;
+- se só houver V/D/E, use outcome e deixe result=null;
+- NÃO invente adversário, rodada, data ou resultado.
+
+RETORNE APENAS JSON:
+{
+ "firstRoundDateText":"DD/MM ou DD/MM/AAAA ou null",
+ "firstRoundTimeText":"HH:MM ou null",
+ "matches":[
+  {"sequence":1,"round":null,"opponent":null,"competitionType":"league|cup","venue":"Casa|Fora","dateText":null,"timeText":null,"result":null,"outcome":"V|D|E|null","played":false,"conditional":false}
+ ]
+}
+
+Contexto do slot:
+${JSON.stringify({team:s.teamName,round:s.round,competition:s.competitionName,defaultMatchTime:s.defaultMatchTime})}`}];
+ for(const f of frames)parts.push({inlineData:{mimeType:f.mimeType,data:f.base64}});
+ return geminiJson(parts,{temperature:.01,maxOutputTokens:9000});
+}
+
+function inferCalendarDateV67(dateText,slot){
+  const raw=String(dateText||'').trim();
+  if(!raw)return null;
+
+  let d=null,m=null,y=null;
+  let hit=raw.match(/(\d{1,2})\s*[\/\-\.]\s*(\d{1,2})(?:\s*[\/\-\.]\s*(\d{2,4}))?/);
+  if(hit){
+    d=Number(hit[1]);m=Number(hit[2]);y=hit[3]?Number(hit[3]):null;
+  }else{
+    hit=raw.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if(hit){y=Number(hit[1]);m=Number(hit[2]);d=Number(hit[3])}
+  }
+  if(!d||!m||d<1||d>31||m<1||m>12)return null;
+
+  const now=new Date();
+  if(y!=null && y<100)y+=2000;
+  if(y==null){
+    // Calendários do OSM geralmente pertencem à competição corrente.
+    // Escolhe o ano que deixa a primeira rodada mais plausível em torno do período atual,
+    // sem usar a data do upload como âncora de rodada.
+    const candidates=[now.getFullYear()-1,now.getFullYear(),now.getFullYear()+1]
+      .map(yy=>new Date(yy,m-1,d,12,0,0,0))
+      .filter(x=>!Number.isNaN(x.getTime()));
+    candidates.sort((a,b)=>Math.abs(a.getTime()-now.getTime())-Math.abs(b.getTime()-now.getTime()));
+    y=candidates[0].getFullYear();
+  }
+
+  const out=new Date(y,m-1,d,12,0,0,0);
+  return Number.isNaN(out.getTime())?null:out;
+}
+
+function combineCalendarDateTimeV67(date,timeText){
+  if(!date)return null;
+  const out=new Date(date);
+  const m=String(timeText||'').match(/(\d{1,2}):(\d{2})/);
+  if(m)out.setHours(Number(m[1]),Number(m[2]),0,0);
+  else out.setHours(12,0,0,0);
+  return out;
+}
+
+function normalizeCalendarMatchV54(x){
+ const outcome=['V','D','E'].includes(String(x.outcome||'').toUpperCase())?String(x.outcome).toUpperCase():null;
+ return {
+  sequence:Number(x.sequence)||null,
+  round:x.round??null,
+  opponent:x.opponent??null,
+  competitionType:x.competitionType==='cup'?'cup':'league',
+  venue:x.venue==='Casa'?'Casa':'Fora',
+  dateText:x.dateText||null,
+  timeText:x.timeText||null,
+  result:x.result||null,
+  outcome,
+  played:!!x.played||!!outcome||!!x.result,
+  conditional:!!x.conditional,
+  skipped:false,
+  dateTime:null,
+  calendarAnchored:false
+ };
+}
+
+function applyCalendarDatesFromVideoV67(s,result){
+  const rows=s.schedule||[];
+  if(!rows.length)return false;
+
+  const firstText=result?.firstRoundDateText || rows[0]?.dateText || null;
+  const firstDate=inferCalendarDateV67(firstText,s);
+  if(!firstDate){
+    s.calendarStartDateText=null;
+    s.calendarStartDateIso=null;
+    s.calendarDateSource='missing';
+    return false;
+  }
+
+  s.calendarStartDateText=firstText;
+  s.calendarStartDateIso=firstDate.toISOString();
+  s.calendarDateSource='video';
+
+  const defaultTime=result?.firstRoundTimeText || s.defaultMatchTime || null;
+
+  rows.forEach((row,i)=>{
+    // Se a própria linha trouxer data legível, ela vence o cálculo sequencial.
+    const rowExplicit=inferCalendarDateV67(row.dateText,s);
+    const date=rowExplicit || new Date(firstDate.getFullYear(),firstDate.getMonth(),firstDate.getDate()+i,12,0,0,0);
+    row.calendarDateIso=date.toISOString().slice(0,10);
+    const time=row.timeText || (i===0?result?.firstRoundTimeText:null) || s.defaultMatchTime || defaultTime;
+    if(time){
+      const dt=combineCalendarDateTimeV67(date,time);
+      row.dateTime=dt?dt.toISOString():null;
+      row.calendarAnchored=!!row.dateTime;
+    }else{
+      row.dateTime=null;
+      row.calendarAnchored=false;
+    }
+  });
+
+  return true;
+}
+
+function applyCalendarResultV54(result,slotNumber){
+ const s=state.slots[slotNumber-1],old=new Map((s.schedule||[]).map(x=>[calendarRowKeyV54(x),x]));
+ const incoming=(result.matches||[]).map(normalizeCalendarMatchV54);
+
+ s.schedule=incoming.map(x=>{
+  const prev=old.get(calendarRowKeyV54(x))||{};
+  return {
+   ...prev,...x,
+   result:prev.result&&String(prev.result).match(/\d/)?prev.result:(x.result||prev.result||null),
+   outcome:x.outcome||prev.outcome||null,
+   played:!!(prev.played||x.played),
+   tacticSnapshot:prev.tacticSnapshot||null,
+   opponentSnapshot:prev.opponentSnapshot||null,
+   resultEntryAt:prev.resultEntryAt||null
+  };
+ });
+
+ // Remove qualquer âncora antiga baseada no "próximo jogo" ou no dia em que o vídeo foi enviado.
+ s.calendarAnchorAt=null;
+ s.calendarAnchorIndex=null;
+
+ const dated=applyCalendarDatesFromVideoV67(s,result);
+ pruneConditionalCupMatches(s);
+ s.calendarReadAt=nowIso();
+ s.updatedAt=nowIso();
+ ensureNextMatchFromScheduleV54(s);
+ saveState();
+
+ if(!dated)toast('Calendário lido, mas a data da 1ª rodada não ficou legível no vídeo.');
+}
+
+function applyCalendarStartManualV67(n,value){
+  const s=state.slots[n-1];
+  const d=inferCalendarDateV67(value,s);
+  if(!d){toast('Informe a data da primeira rodada em DD/MM ou DD/MM/AAAA');return}
+  const rows=s.schedule||[];
+  if(!rows.length){toast('Leia o calendário primeiro');return}
+
+  s.calendarStartDateText=value;
+  s.calendarStartDateIso=d.toISOString();
+  s.calendarDateSource='manual-correction';
+
+  rows.forEach((row,i)=>{
+    const date=new Date(d.getFullYear(),d.getMonth(),d.getDate()+i,12,0,0,0);
+    row.calendarDateIso=date.toISOString().slice(0,10);
+    const time=row.timeText||s.defaultMatchTime||null;
+    if(time){
+      const dt=combineCalendarDateTimeV67(date,time);
+      row.dateTime=dt?dt.toISOString():null;
+      row.calendarAnchored=!!row.dateTime;
+    }else{
+      row.dateTime=null;
+      row.calendarAnchored=false;
+    }
+  });
+
+  ensureNextMatchFromScheduleV54(s);
+  s.updatedAt=nowIso();
+  saveState();
+  renderCalendarResultV54({matches:rows,firstRoundDateText:value},n);
+  toast('Data inicial do calendário corrigida.');
+}
+
+function latestPendingResultRow(s){
+ const rows=(s.schedule||[]).map((x,i)=>({...x,_i:i}))
+  .filter(x=>!x.result&&!x.played&&!x.skipped&&x.dateTime&&new Date(x.dateTime).getTime()<=Date.now());
+ rows.sort((a,b)=>new Date(b.dateTime)-new Date(a.dateTime));
+ return rows[0]||null;
+}
+function nextFutureRow(s){
+ return (s.schedule||[])
+  .filter(x=>!x.result&&!x.played&&!x.skipped&&x.dateTime&&new Date(x.dateTime).getTime()>Date.now())
+  .sort((a,b)=>new Date(a.dateTime)-new Date(b.dateTime))[0]||null;
+}
+
+function calendarDateLabelV67(x,s){
+  if(x.dateTime)return fmtDateTime(x.dateTime);
+  if(x.calendarDateIso){
+    const [y,m,d]=x.calendarDateIso.split('-');
+    return `${d}/${m}${s.defaultMatchTime?' · '+s.defaultMatchTime:' · horário NI'}`;
+  }
+  return 'Data NI';
+}
+
+function calendarStatusV54(x,s,i){
+ const out=calendarOutcomeV55(x);
+ if(x.result)return `<span class="calendar-result ${out==='V'?'win':out==='D'?'loss':'draw'}"><b>${esc(out||'')}</b> · ${esc(x.result)}</span>`;
+ if(x.played)return `<span class="calendar-result ${out==='V'?'win':out==='D'?'loss':'draw'}"><b>${esc(out||'J')}</b></span>`;
+ if(x.skipped)return `<span class="muted">Ignorado</span>`;
+ if(!x.calendarDateIso && !x.dateTime)return `<span class="muted">Data não identificada</span>`;
+ if(x.dateTime && new Date(x.dateTime).getTime()<=Date.now()){
+  return x.tacticSnapshot
+   ? `<button class="btn tiny danger" onclick="resultModal(${s.slotNumber},${i})">Registrar resultado</button>`
+   : `<span class="warn-text">Horário passou · sem tática registrada</span>`;
+ }
+ if(!x.dateTime)return `<span class="future-label">Agendado · horário NI</span>`;
+ return `<span class="future-label">Agendado</span>`;
+}
+
+function calendarTableHtml(s){
+ const rows=s.schedule||[];
+ if(!rows.length)return '<p class="muted">Calendário ainda não lido.</p>';
+ return `<div class="calendar-list">${rows.map((x,i)=>{
+   const overdue=!x.played&&!x.result&&!x.skipped&&x.dateTime&&new Date(x.dateTime).getTime()<=Date.now();
+   return `<div class="calendar-row ${overdue?'overdue':''} ${x.skipped?'skipped':''}">
+    <div class="calendar-main"><b>${x.competitionType==='cup'?'🏆':'⚽'} ${esc(x.opponent||'Adversário')}</b><span>${esc(x.venue||'NI')} · ${x.round!=null?'Rodada '+esc(x.round):'Rodada NI'}</span></div>
+    <div class="calendar-when"><b>${esc(calendarDateLabelV67(x,s))}</b></div>
+    <div class="calendar-status">${calendarStatusV54(x,s,i)}</div>
+   </div>`;
+ }).join('')}</div>`;
+}
+
+function renderCalendarResultV54(result,slotNumber=selectedSlot){
+ const s=state.slots[slotNumber-1],rows=s.schedule||[];
+ if(slotNumber!==selectedSlot||analysisMode!=='calendar')return;
+ if(els.coveragePanel)els.coveragePanel.classList.add('hidden');
+
+ const detected=s.calendarStartDateText;
+ const source=s.calendarDateSource==='video'?'Detectada no vídeo':'Correção manual';
+
+ els.analysisResult.innerHTML=`<div class="result-card">
+  <h3>Calendário · Slot ${slotNumber}</h3>
+  <div class="data-grid">
+   <div class="data-cell"><span>Data da 1ª rodada</span><b>${esc(detected||'Não identificada')}</b></div>
+   <div class="data-cell"><span>Origem</span><b>${esc(detected?source:'—')}</b></div>
+   <div class="data-cell"><span>Horário padrão</span><b>${esc(s.defaultMatchTime||'NI')}</b></div>
+  </div>
+  <p class="muted small">A sequência de datas parte da primeira rodada lida no vídeo. A data de envio do vídeo não é usada.</p>
+  ${!detected?`<div class="calendar-anchor"><label>Corrigir data da 1ª rodada<input id="calendarStartInput" placeholder="DD/MM ou DD/MM/AAAA"></label><button class="btn" onclick="applyCalendarStartManualV67(${slotNumber},document.getElementById('calendarStartInput').value)">Aplicar</button></div>`:''}
+  ${calendarTableHtml(s)}
+ </div>`;
+ cacheAnalysisUiV54(slotNumber,'calendar');
+}
