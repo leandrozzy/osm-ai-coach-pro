@@ -42,14 +42,18 @@
 
     <section id="view-analyze" class="view">
       <div class="section-head">
-        <div><span class="eyebrow">ANÁLISE</span><h2>Um vídeo, o máximo de dados</h2></div>
+        <div><span class="eyebrow">ANÁLISE</span><h2>Escolha o que deseja fazer</h2></div>
+      </div>
+      <div class="analysis-mode-picker">
+        <button class="mode-btn active" data-analysis-mode="tactic"><b>⚽ Gerar tática</b><span>Partida, adversário e Data Analyst</span></button>
+        <button class="mode-btn" data-analysis-mode="market"><b>💰 Mercado</b><span>Elenco, treinamento e transferências</span></button>
       </div>
       <div class="card analyze-card">
         <div class="upload-zone" id="uploadZone">
           <input id="mediaInput" type="file" accept="video/*,image/*" multiple hidden />
           <div class="upload-icon">＋</div>
-          <h3>Enviar vídeo ou imagens</h3>
-          <p>Grave os 4 slots em sequência. O app seleciona quadros diferentes e identifica as telas automaticamente.</p>
+          <h3 id="uploadTitle">Enviar vídeo da partida</h3>
+          <p id="uploadHelp">Para gerar tática, grave somente as telas da partida e do adversário. Não precisa mostrar mercado nem elenco completo.</p>
           <button id="chooseMedia" class="btn">Escolher mídia</button>
         </div>
         <div class="analyze-options">
@@ -59,7 +63,7 @@
               <option value="1">Slot 1</option><option value="2">Slot 2</option><option value="3">Slot 3</option><option value="4">Slot 4</option>
             </select>
           </label>
-          <label class="switch-row"><input id="autoTactic" type="checkbox" checked /><span>Gerar tática automaticamente após ler o vídeo</span></label>
+          <label class="switch-row" id="autoTacticRow"><input id="autoTactic" type="checkbox" checked /><span>Gerar tática automaticamente após a leitura</span></label>
         </div>
         <div id="analysisProgress" class="progress-wrap hidden">
           <div class="progress-track"><div id="progressBar" class="progress-bar"></div></div>
@@ -70,17 +74,7 @@
         <div id="analysisResult" class="analysis-result"></div>
       </div>
 
-      <div class="card guide-card">
-        <h3>O que mostrar no vídeo</h3>
-        <div class="guide-grid">
-          <div><b>1. Tela inicial</b><span>slot, rival, local, força, bônus, CT e treino secreto</span></div>
-          <div><b>2. Analista</b><span>abra o relatório e também os detalhes: formação, plano, marcação e impedimento</span></div>
-          <div><b>3. Elenco</b><span>jogadores, posições, ratings e quem está treinando</span></div>
-          <div><b>4. Mercado</b><span>lista de transferências e jogadores colocados à venda</span></div>
-          <div><b>5. Calendário</b><span>horário/contagem da próxima partida</span></div>
-          <div><b>6. Resultado</b><span>placar e estatísticas depois do jogo para aprendizado</span></div>
-        </div>
-      </div>
+      <div class="card guide-card" id="analysisGuide"></div>
     </section>
 
     <section id="view-market" class="view">
