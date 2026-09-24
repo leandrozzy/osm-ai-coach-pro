@@ -1805,15 +1805,15 @@ function refereeTackling(r,s=null){
 }
 function linePolicyV58(s,formation,gamePlan){
  const diff=tacticStrengthDiffV58(s),human=!!s?.opponent?.human,oppStyle=normalize(s?.opponent?.style),venue=normalize(s?.match?.venue);
- let attack='Atacar apenas',mid='Manter posição',def='Defender atrás';
+ let attack='Atacar apenas',mid='Manter posições',def='Defender atrás';
  if(diff!==null&&diff>=15 && /^4-3-3/.test(formation)){
    mid='Pressionar na frente';
    def='Apoiar meio-campo';
    if(diff>=25 && venue.includes('casa') && !/contra/.test(oppStyle))def='Defesas atacantes';
    if(human && /contra/.test(oppStyle))def='Apoiar meio-campo';
  }else if(diff!==null&&diff>=7){
-   mid=gamePlan==='Jogar pelas alas'?'Pressionar na frente':'Manter posição';def='Apoiar meio-campo';
- }else if(diff!==null&&diff<=-8){mid='Apoiar a defesa';def='Defender atrás'}
+   mid=gamePlan==='Jogar pelas alas'?'Pressionar na frente':'Manter posições';def='Apoiar meio-campo';
+ }else if(diff!==null&&diff<=-8){mid='Ajudar a defesa';def='Defender atrás'}
  return {attack,mid,def};
 }
 function dominantBaseV58(s){
@@ -2556,4 +2556,141 @@ function tacticVisualHtmlV60(t){
    <div><span>Fazer fora-de-jogo</span><b>${esc(t.offside)}</b>${offsideVisualHtmlV64(t.offside)}</div>
   </div>
  </div>`;
+}
+
+
+// ===== v6.5 final tactic visuals =====
+function tackleVisualHtmlV65(tackling){
+  const n = normalize(tackling);
+  let accent = '#7bd4ff', impact = 0, gap = 11, label='Entrada cuidadosa';
+  if(n.includes('normal')){ accent='#ffd56b'; impact=0; gap=9; label='Entrada normal'; }
+  if(n.includes('agres')){ accent='#ff9b6f'; impact=2; gap=6; label='Entrada agressiva'; }
+  if(n.includes('dura') || n.includes('hard')){ accent='#ff6f6f'; impact=3; gap=4; label='Entrada dura'; }
+  if(n.includes('extrem')){ accent='#ff4f62'; impact=4; gap=2; label='Entrada extrema'; }
+  const hitLines = Array.from({length:impact}, (_,i)=>{
+    const x = 39 + i*3; const y1 = 23 + i*2; const y2 = 16 + i*2;
+    return `<path d="M${x} ${y1} L${x+4} ${y2}" stroke="${accent}" stroke-width="3.2" stroke-linecap="round"/>`;
+  }).join('');
+  return `<div class="ref-icon" aria-label="${esc(label)}"><svg viewBox="0 0 80 64" role="img">
+    <ellipse cx="40" cy="54" rx="22" ry="6" fill="rgba(0,0,0,.18)"/>
+    <circle cx="30" cy="18" r="5.5" fill="#cbe9ff"/>
+    <path d="M28 24l-6 8 8 5 5-8z" fill="#2d6bb4"/>
+    <path d="M21 33l-8 11" stroke="#eaf5ff" stroke-width="5" stroke-linecap="round"/>
+    <path d="M28 36l-${gap} 11" stroke="#eaf5ff" stroke-width="5" stroke-linecap="round"/>
+    <circle cx="50" cy="18" r="5.5" fill="#ffe0cf"/>
+    <path d="M48 24l6 8-8 5-5-8z" fill="#d34d4d"/>
+    <path d="M59 33l8 11" stroke="#fff0ea" stroke-width="5" stroke-linecap="round"/>
+    <path d="M52 36l${gap} 11" stroke="#fff0ea" stroke-width="5" stroke-linecap="round"/>
+    <path d="M37 42l6-8" stroke="${accent}" stroke-width="5.8" stroke-linecap="round"/>
+    <circle cx="43" cy="34" r="2.8" fill="${accent}"/>
+    ${hitLines}
+  </svg></div>`;
+}
+function sectorArrowSvgV65(kind,text){
+  const x = normalize(text);
+  let color='#7bd4ff', path='M16 27 L16 7 M16 7 L9 14 M16 7 L23 14', label='Atacar';
+  if(kind==='attack'){
+    if(x.includes('def')){ color='#ff9f79'; path='M16 5 L16 25 M16 25 L9 18 M16 25 L23 18'; label='Ajudar a defender'; }
+    else if(x.includes('meio') || x.includes('apoiar')){ color='#b9f7ab'; path='M5 16 L27 16 M5 16 L12 9 M5 16 L12 23 M27 16 L20 9 M27 16 L20 23'; label='Recuar e apoiar'; }
+    else { color='#6fd0ff'; label='Ficar na frente'; }
+  } else if(kind==='mid'){
+    if(x.includes('def')){ color='#ffcf72'; path='M16 5 L16 25 M16 25 L9 18 M16 25 L23 18'; label='Recuar'; }
+    else if(x.includes('manter') || x.includes('posi')){ color='#b9f7ab'; path='M5 16 L27 16 M5 16 L12 9 M5 16 L12 23 M27 16 L20 9 M27 16 L20 23'; label='Equilíbrio'; }
+    else { color='#6fd0ff'; label='Pressionar à frente'; }
+  } else {
+    if(x.includes('atac')){ color='#6fd0ff'; path='M16 27 L16 7 M16 7 L9 14 M16 7 L23 14'; label='Subir ao ataque'; }
+    else if(x.includes('meio') || x.includes('apoiar')){ color='#b9f7ab'; path='M5 16 L27 16 M5 16 L12 9 M5 16 L12 23 M27 16 L20 9 M27 16 L20 23'; label='Apoiar o meio'; }
+    else { color='#ff9f79'; path='M16 5 L16 25 M16 25 L9 18 M16 25 L23 18'; label='Ficar atrás'; }
+  }
+  return `<span class="sector-chip ${kind}" aria-label="${esc(label)}"><svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="13.5" fill="rgba(6,17,28,.28)" stroke="rgba(255,255,255,.14)"/><path d="${path}" fill="none" stroke="${color}" stroke-width="3.3" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>`;
+}
+function tacticVisualHtmlV60(t){
+ if(!t)return '';
+ return `<div class="osm-tactic-ui">
+  <div class="osm-tactic-top">
+   <div class="osm-formation"><span>Formação</span><b>${esc(t.formation)}</b>${formationPitchHtmlV61(t.formation)}</div>
+   <div class="osm-plan"><span>Estilo de jogo</span><b>${esc(t.gamePlan)}</b>${planVisualHtmlV62(t.gamePlan)}</div>
+   <div class="osm-tackle"><span>Tipo de entrada</span><b>${esc(t.tackling)}</b>${tackleVisualHtmlV65(t.tackling)}</div>
+  </div>
+
+  <div class="osm-sector-wrap">
+   <div class="sector-pitch">
+    <div class="sector-line forwards"><div class="sector-band"><div class="sector-meta"><span class="line-name">Avançados</span><span class="line-goal">${esc(t.attackInstruction)}</span></div>${sectorArrowSvgV65('attack',t.attackInstruction)}</div></div>
+    <div class="sector-line mids"><div class="sector-band"><div class="sector-meta"><span class="line-name">Médios</span><span class="line-goal">${esc(t.midfieldInstruction)}</span></div>${sectorArrowSvgV65('mid',t.midfieldInstruction)}</div></div>
+    <div class="sector-line defs"><div class="sector-band"><div class="sector-meta"><span class="line-name">Defesas</span><span class="line-goal">${esc(t.defenceInstruction)}</span></div>${sectorArrowSvgV65('def',t.defenceInstruction)}</div></div>
+   </div>
+   <div class="sector-values">
+    <div><small>Avançados</small><b>${esc(t.attackInstruction)}</b></div>
+    <div><small>Médios</small><b>${esc(t.midfieldInstruction)}</b></div>
+    <div><small>Defesas</small><b>${esc(t.defenceInstruction)}</b></div>
+   </div>
+  </div>
+
+  <div class="osm-sliders">
+   ${tacticSliderV60('Pressão',t.pressure)}
+   ${tacticSliderV60('Estilo',t.mentality)}
+   ${tacticSliderV60('Temporização',t.tempo)}
+  </div>
+
+  <div class="osm-bottom">
+   <div><span>Marcação</span><b>${esc(t.marking)}</b>${markingVisualHtmlV64(t.marking)}</div>
+   <div><span>Fazer fora-de-jogo</span><b>${esc(t.offside)}</b>${offsideVisualHtmlV64(t.offside)}</div>
+  </div>
+ </div>`;
+}
+
+
+// ===== v6.6: 4 níveis reais de entrada + desenhos progressivos =====
+function tackleVisualHtmlV65(tackling){
+  const n=normalize(tackling);
+  let level='Normal';
+  if(n.includes('cuidad')) level='Cuidadoso';
+  else if(n.includes('normal')) level='Normal';
+  else if(n.includes('agres')) level='Agressivo';
+  else if(n.includes('extrem') || n.includes('combativ')) level='Extremo';
+
+  const cfg={
+    'Cuidadoso': {accent:'#7be4c5', gap:16, impact:0, lean:0, label:'Entrada cuidadosa'},
+    'Normal':    {accent:'#ffd56b', gap:11, impact:1, lean:1, label:'Entrada normal'},
+    'Agressivo':{accent:'#ff9b6f', gap:6,  impact:3, lean:3, label:'Entrada agressiva'},
+    'Extremo':   {accent:'#ff4f62', gap:2,  impact:5, lean:5, label:'Entrada extrema'}
+  }[level];
+
+  const hitLines=Array.from({length:cfg.impact},(_,i)=>{
+    const x=38+i*3.3, y=26-(i%2)*4;
+    return `<path d="M${x} ${y} l${4+i*.3} -${5+i}" stroke="${cfg.accent}" stroke-width="${2.5+i*.18}" stroke-linecap="round"/>`;
+  }).join('');
+
+  const warnRing=level==='Extremo'
+    ? `<circle cx="40" cy="34" r="11" fill="none" stroke="${cfg.accent}" stroke-width="2.2" stroke-dasharray="4 3" opacity=".9"/>`
+    : '';
+
+  return `<div class="ref-icon tackle-visual tackle-${normalize(level)}" aria-label="${esc(cfg.label)}">
+    <svg viewBox="0 0 80 64" role="img">
+      <ellipse cx="40" cy="55" rx="24" ry="6" fill="rgba(0,0,0,.18)"/>
+
+      <circle cx="25" cy="15" r="5.5" fill="#cfeaff"/>
+      <path d="M22 21 l-7 9 8 5 6-9 z" fill="#2d6bb4"/>
+      <path d="M16 31 l-8 11" stroke="#eef8ff" stroke-width="5" stroke-linecap="round"/>
+      <path d="M24 34 l${10-cfg.lean} 11" stroke="#eef8ff" stroke-width="5" stroke-linecap="round"/>
+
+      <circle cx="55" cy="15" r="5.5" fill="#ffe0cf"/>
+      <path d="M58 21 l7 9-8 5-6-9 z" fill="#d34d4d"/>
+      <path d="M64 31 l8 11" stroke="#fff1eb" stroke-width="5" stroke-linecap="round"/>
+      <path d="M56 34 l-${10-cfg.lean} 11" stroke="#fff1eb" stroke-width="5" stroke-linecap="round"/>
+
+      <path d="M34 45 L${40-cfg.gap/2} 35" stroke="#eef8ff" stroke-width="5.8" stroke-linecap="round"/>
+      <path d="M46 45 L${40+cfg.gap/2} 35" stroke="#fff1eb" stroke-width="5.8" stroke-linecap="round"/>
+      <circle cx="40" cy="34" r="3.3" fill="${cfg.accent}" stroke="#fff" stroke-width="1.2"/>
+
+      ${hitLines}
+      ${warnRing}
+    </svg>
+    <div class="tackle-scale">
+      <span class="${level==='Cuidadoso'?'active':''}"></span>
+      <span class="${level==='Normal'?'active':''}"></span>
+      <span class="${level==='Agressivo'?'active':''}"></span>
+      <span class="${level==='Extremo'?'active':''}"></span>
+    </div>
+  </div>`;
 }

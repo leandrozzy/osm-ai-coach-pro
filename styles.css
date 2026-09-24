@@ -560,3 +560,80 @@ body:before{
   .sector-line.mids{top:88px !important}
   .sector-line.defs{top:152px !important}
 }
+
+
+/* ===== v6.5 final visual refinement ===== */
+:root{
+  --osm-card:#0d2239;
+  --osm-card-2:#0a1a2c;
+  --osm-edge:#264a6d;
+  --osm-gold:#e4c05f;
+  --osm-ice:#eff8ff;
+}
+body{background:
+  radial-gradient(circle at 15% -10%, rgba(49,101,173,.28), transparent 28%),
+  radial-gradient(circle at 85% 0%, rgba(34,159,127,.16), transparent 24%),
+  linear-gradient(180deg,#07111d 0%,#091a2b 26%,#071422 100%) !important;}
+header,.topbar,.app-header{backdrop-filter: blur(10px)}
+.card,.summary-card,.hero-card,.slot-card,.schedule-card,.result-card,.info-card,.today-event,.timeline-item,.tactic-card,.analysis-card{
+  box-shadow:0 12px 28px rgba(0,0,0,.26), inset 0 1px 0 rgba(255,255,255,.03);
+}
+button,.btn,.primary,.secondary,.slot-tab,.tab,.chip{transition:transform .15s ease, box-shadow .15s ease, background .15s ease}
+button:active,.btn:active,.primary:active,.secondary:active{transform:translateY(1px)}
+button:hover,.btn:hover,.primary:hover,.secondary:hover{box-shadow:0 10px 24px rgba(0,0,0,.18)}
+.slot-tab.active,.tab.active,[aria-selected="true"]{box-shadow:0 0 0 1px rgba(91,214,163,.35), inset 0 0 0 1px rgba(255,255,255,.05), 0 10px 22px rgba(0,0,0,.25)}
+.osm-tactic-ui{gap:16px !important}
+.osm-tactic-top{gap:14px !important}
+.osm-formation,.osm-plan,.osm-tackle,.osm-sliders,.osm-sector-wrap,.osm-bottom>div{
+  background:linear-gradient(180deg,#113258,#0a2037) !important;
+  border:1px solid rgba(73,118,166,.55) !important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.05), 0 14px 26px rgba(0,0,0,.2) !important;
+}
+.osm-tactic-top span,.osm-bottom span,.sector-values small{color:var(--osm-gold)!important}
+.osm-formation b,.osm-plan b,.osm-tackle b,.osm-bottom b,.sector-values b{color:#f7fbff !important}
+.ref-icon,.player-icon{margin-top:12px !important}
+.ref-icon svg,.player-icon svg{width:56px !important;height:56px !important}
+.osm-tackle{min-height:212px}
+.osm-sector-wrap{grid-template-columns:minmax(0,1fr) 240px !important;gap:14px !important;padding:16px !important}
+.sector-pitch{height:250px !important;border-radius:24px !important;background:linear-gradient(180deg,#24af41,#0f7a24) !important}
+.sector-pitch:before{inset:16px !important;border-radius:16px !important}
+.sector-pitch:after{left:18px !important; right:18px !important; border-top:2px solid rgba(239,255,231,.9)!important}
+.sector-line{left:16px !important; right:16px !important; padding:0 !important; z-index:3 !important}
+.sector-line.forwards{top:20px !important}
+.sector-line.mids{top:95px !important}
+.sector-line.defs{top:170px !important}
+.sector-band{
+  width:100%; display:flex; align-items:center; justify-content:space-between; gap:12px;
+  padding:10px 12px; border-radius:16px;
+  background:rgba(7,20,32,.30); border:1px solid rgba(255,255,255,.14);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.03);
+}
+.sector-meta{display:flex; flex-direction:column; gap:4px; min-width:0}
+.sector-band .line-name{background:none !important; border:none !important; padding:0 !important; min-width:0 !important; text-align:left !important; font-size:12px !important; color:#fff4c4 !important}
+.sector-band .line-goal{background:none !important; border:none !important; padding:0 !important; color:#ecf6ff !important; font-size:13px !important; font-weight:900 !important; opacity:1 !important}
+.sector-chip{width:58px !important; height:58px !important; flex:0 0 58px; background:rgba(3,13,22,.22); box-shadow:inset 0 1px 0 rgba(255,255,255,.07)}
+.sector-chip svg{width:42px !important; height:42px !important}
+.sector-values{gap:12px !important}
+.sector-values div{background:linear-gradient(180deg,#0d243e,#09192a) !important; border:1px solid rgba(72,113,153,.38); min-height:88px; display:flex; flex-direction:column; justify-content:center}
+.sector-values b{font-size:18px !important}
+.formation-pitch .formation-svg{max-width:210px !important}
+.player-dot{fill:#9fe0ff; stroke:#ecffff; stroke-width:1.8px}
+.player-dot.gk{fill:#ffd56b; stroke:#fff5d3; stroke-width:1.8px}
+@media (max-width: 760px){
+  .osm-sector-wrap{grid-template-columns:1fr !important}
+  .sector-pitch{height:232px !important}
+  .sector-line.forwards{top:16px !important}
+  .sector-line.mids{top:86px !important}
+  .sector-line.defs{top:156px !important}
+  .sector-values div{min-height:78px}
+}
+
+/* v6.6 - visual dos quatro níveis de entrada */
+.tackle-visual{flex-direction:column;gap:7px}
+.tackle-scale{display:grid;grid-template-columns:repeat(4,16px);gap:6px;justify-content:center}
+.tackle-scale span{height:5px;border-radius:999px;background:#28435e;border:1px solid rgba(255,255,255,.08)}
+.tackle-scale span.active{background:linear-gradient(90deg,#46d9bd,#ffd56b,#ff9b6f,#ff4f62);box-shadow:0 0 8px rgba(255,255,255,.12)}
+.tackle-cuidadoso svg{filter:drop-shadow(0 5px 10px rgba(70,217,189,.10))}
+.tackle-normal svg{filter:drop-shadow(0 5px 10px rgba(255,213,107,.10))}
+.tackle-agressivo svg{filter:drop-shadow(0 5px 10px rgba(255,155,111,.16))}
+.tackle-extremo svg{filter:drop-shadow(0 5px 12px rgba(255,79,98,.20))}
