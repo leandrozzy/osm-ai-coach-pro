@@ -450,8 +450,8 @@ AS 6 TELAS OBRIGATÓRIAS:
 1) Tela da partida
 2) Meu elenco / força por setor
 3) Elenco do adversário / força por setor
-4) Analista — resumo
-5) Analista — marcação e impedimento
+4) Analista — relatório
+5) Analista — plano, marcação e impedimento
 6) Analista — formação
 
 SEPARAÇÃO FEITA PELO APP:
@@ -481,7 +481,7 @@ TAREFA:
 - Use números inteiros 0–100 nos sliders.
 
 RETORNE APENAS JSON:
-{"captures":[{"slotNumber":1,"confidence":0.0,"screensSeen":["match_overview","my_squad","opponent_squad","analyst_summary","analyst_marking","analyst_formation"],"teamName":null,"competitionName":null,"competitionType":null,"round":null,"totalRounds":null,"myTeam":{"overall":null,"goalkeeper":null,"defence":null,"midfield":null,"attack":null,"squadValue":null,"playerCount":null,"stadium":null,"loginBonus":null,"secretTraining":null,"trainingCamp":null,"leaguePosition":null},"opponent":{"teamName":null,"human":null,"manager":null,"overall":null,"goalkeeper":null,"defence":null,"midfield":null,"attack":null,"squadValue":null,"playerCount":null,"stadium":null,"loginBonus":null,"secretTraining":null,"trainingCamp":null,"formation":null,"style":null,"marking":null,"offside":null,"tackling":null},"match":{"venue":null,"refereeName":null,"refereeColor":null,"exactDateTimeText":null,"countdownText":null},"roster":[],"market":[],"result":{},"missing":[],"recommendedTactic":{"formation":"","gamePlan":"","pressure":0,"mentality":0,"tempo":0,"marking":"À zona","offside":"Não","tackling":"Normal","attackInstruction":"","midfieldInstruction":"","defenceInstruction":"","confidence":"média","reason":""}}]}`;
+{"captures":[{"slotNumber":1,"confidence":0.0,"screensSeen":["match_overview","my_squad","opponent_squad","analyst_report","analyst_plan","analyst_formation"],"teamName":null,"competitionName":null,"competitionType":null,"round":null,"totalRounds":null,"myTeam":{"overall":null,"goalkeeper":null,"defence":null,"midfield":null,"attack":null,"squadValue":null,"playerCount":null,"stadium":null,"loginBonus":null,"secretTraining":null,"trainingCamp":null,"leaguePosition":null},"opponent":{"teamName":null,"human":null,"manager":null,"overall":null,"goalkeeper":null,"defence":null,"midfield":null,"attack":null,"squadValue":null,"playerCount":null,"stadium":null,"loginBonus":null,"secretTraining":null,"trainingCamp":null,"formation":null,"style":null,"marking":null,"offside":null,"tackling":null},"match":{"venue":null,"refereeName":null,"refereeColor":null,"exactDateTimeText":null,"countdownText":null},"roster":[],"market":[],"result":{},"missing":[],"recommendedTactic":{"formation":"","gamePlan":"","pressure":0,"mentality":0,"tempo":0,"marking":"À zona","offside":"Não","tackling":"Normal","attackInstruction":"","midfieldInstruction":"","defenceInstruction":"","confidence":"média","reason":""}}]}`;
  return `Você é um especialista em evolução de elenco no OSM 26. O navegador já rodou OCR LOCAL em um vídeo SOMENTE DO ELENCO do usuário. NÃO procure lista de transferências e NÃO invente jogador.
 
 DESTINO: ${slotHint}
@@ -1555,6 +1555,123 @@ async function handleFiles(files){
   analysisTargetOverrideV54=null;await releaseOcrWakeLock();
   if(jobSlot===selectedSlot&&analysisMode===jobMode)setTimeout(()=>els.analysisProgress?.classList.add('hidden'),1200);
  }
+}
+
+
+// ===== v5.5: seis telas únicas de tática + elenco por seção + V/E/D =====
+function requiredTacticTypes(){
+ return [
+  {key:'match_overview',label:'1. Tela da partida'},
+  {key:'my_squad',label:'2. Meu elenco / força por setor'},
+  {key:'opponent_squad',label:'3. Elenco do adversário / força por setor'},
+  {key:'analyst_report',label:'4. Analista — relatório'},
+  {key:'analyst_plan',label:'5. Analista — plano, marcação e impedimento'},
+  {key:'analyst_formation',label:'6. Analista — formação'}
+ ];
+}
+function buildFrameClassification(text,frame,slot){
+ const t=normText(text),myName=normText(slot?.teamName),oppName=normText(slot?.opponent?.teamName),nick=normText(settings.userNick||''),l=frame?.layout||{};
+ const score={match_overview:0,my_squad:0,opponent_squad:0,analyst_report:0,analyst_plan:0,analyst_formation:0};
+ if(t.includes('vs'))score.match_overview+=6;if(t.includes('arbitro'))score.match_overview+=8;if(t.includes('jornada'))score.match_overview+=4;if((l.dark||0)>.38)score.match_overview+=2;
+ const squadBase=(l.bottomWhite||0)>.30?5:0;if(squadBase){score.my_squad+=squadBase;score.opponent_squad+=squadBase}
+ if(t.includes('posicao')||t.includes('objetivo')||t.includes('jogador')||t.includes('idade')||t.includes('valor')){score.my_squad+=2;score.opponent_squad+=2}
+ if(nick&&t.includes(nick)){score.my_squad+=14;score.opponent_squad-=10}if(myName&&t.includes(myName)){score.my_squad+=9;score.opponent_squad-=6}if(oppName&&t.includes(oppName)){score.opponent_squad+=12;score.my_squad-=5}
+ const analystLayout=(l.leftWhite||0)>.30;if(analystLayout){score.analyst_report+=4;score.analyst_plan+=3;score.analyst_formation+=2}
+ if(t.includes('pelo que pude ver')||t.includes('tenho a certeza')||t.includes('nivel do estadio')||t.includes('estagio'))score.analyst_report+=12;
+ const planWords=['remate a vista','jogar pelas alas','jogo de passes','contra-ataque','contra ataque','bola longa','marcacao','fora-de-jogo','fora de jogo','homem-a-homem','homem a homem','a zona'];
+ for(const w of planWords)if(t.includes(w))score.analyst_plan+=4;
+ if((l.rightBlue||0)>.10)score.analyst_plan+=5;
+ if(t.includes('formacao:')||t.includes('formação:')||t.includes('suplentes')||t.includes('tatica')||t.includes('tática'))score.analyst_formation+=10;
+ if((l.rightGreen||0)>.16)score.analyst_formation+=6;
+ return score;
+}
+function selectRequiredTacticFrames(frames,ocr){
+ const slot=state.slots[selectedSlot-1]||{};
+ const enriched=(ocr.frames||[]).map(o=>{const frame=frames[(o.frame||1)-1];return {...o,frame,scores:buildFrameClassification(o.text,frame,slot)}}).filter(x=>x.frame);
+ const result=[],used=[];
+ for(const need of requiredTacticTypes()){
+  const min=need.key==='analyst_plan'||need.key==='analyst_formation'?6:5;
+  const candidates=[...enriched].filter(x=>!used.includes(x.frame)).sort((a,b)=>(b.scores[need.key]||0)-(a.scores[need.key]||0));
+  const best=candidates[0];
+  if(best&&(best.scores[need.key]||0)>=min){used.push(best.frame);result.push({type:need.key,label:need.label,frame:best.frame,text:best.text,score:best.scores[need.key]})}
+  else result.push({type:need.key,label:need.label,frame:null,text:null,score:0});
+ }
+ ocr.required=result.reduce((a,x)=>{a[x.type]=x.text||null;return a},{});ocr.missingRequired=result.filter(x=>!x.frame).map(x=>x.label);return result;
+}
+function assertAllRequiredTacticScreens(items){
+ const missing=items.filter(x=>!x.frame).map(x=>x.label);if(!missing.length)return items.map(x=>x.frame);
+ const err=new Error(`Faltaram ${missing.length} das 6 telas obrigatórias: ${missing.join(', ')}. Sem essas telas o app não gera tática.`);err.requiredMissing=missing;throw err;
+}
+
+// Mais evidência visual no elenco, mas sem aumentar OCR local acima de 7 quadros.
+function frameLimitForMode(mode){return mode==='tactic'?12:mode==='calendar'?6:mode==='result'?6:7}
+function evidenceLimitForMode(mode){return mode==='tactic'?6:mode==='calendar'?4:mode==='result'?5:mode==='market'?6:3}
+
+const analyzeOcrPackageBaseV55=analyzeOcrPackage;
+analyzeOcrPackage=async function(ocr,evidence){
+ if(analysisMode!=='market')return analyzeOcrPackageBaseV55(ocr,evidence);
+ const target=analysisTargetOverrideV54||selectedSlot;
+ const parts=[{text:`Você está lendo APENAS O MEU ELENCO no OSM 26. O vídeo percorre uma tabela dividida por cabeçalhos de seção. Use OCR + imagens juntas.
+
+REGRAS DE POSIÇÃO — PRIORIDADE MÁXIMA:
+1. Identifique o cabeçalho da seção acima das linhas e mantenha esse contexto até o próximo cabeçalho:
+   - Avançados => sector=ATA; Pos válidas PL, ED, EE.
+   - Médios => sector=MEI; Pos válidas MDC, MC, MCO, MD, ME.
+   - Defesas => sector=DEF; Pos válidas DD, DC, DE.
+   - Guarda-redes / Guarda redes => sector=GOL; Pos=GR.
+2. Leia a coluna Pos para o subtipo exato. NÃO deduza setor por Ata/Def/Med.
+3. Rating principal: ATA para avançados; MED para médios; DEF para defesas; GR para guarda-redes.
+
+TREINAMENTO — REGRA VISUAL RÍGIDA:
+- training=true SOMENTE quando a CAMISA/ÍCONE DO JOGADOR no extremo ESQUERDO da própria linha estiver LARANJA.
+- O pequeno cartão/retângulo amarelo do lado DIREITO da linha NÃO é treino.
+- Barras verdes/laranjas de condição/moral NÃO são treino.
+- Não marque Conor nem qualquer outro jogador como treinando sem camisa laranja à esquerda.
+
+OUTRAS REGRAS:
+- Consolide jogadores repetidos ao rolar a tela.
+- Extraia nome, section/sector, position, rating, age, value e training.
+- squadValue = soma dos valores visíveis consolidados quando todos forem legíveis; playerCount = quantidade consolidada.
+- Não invente jogadores nem mercado.
+
+Retorne APENAS JSON:
+{"captures":[{"slotNumber":${target},"confidence":0.0,"screensSeen":["squad","training"],"teamName":null,"myTeam":{"overall":null,"goalkeeper":null,"defence":null,"midfield":null,"attack":null,"squadValue":null,"playerCount":null},"opponent":{},"match":{},"roster":[{"name":"","sector":"ATA|MEI|DEF|GOL","position":null,"rating":null,"value":null,"age":null,"training":false,"forSale":false}],"market":[],"missing":[]}]}\n\nOCR COMPLETO:\n${ocr.joined}`}];
+ for(const f of evidence)parts.push({inlineData:{mimeType:f.mimeType,data:f.base64}});
+ return geminiJson(parts,{temperature:.01,maxOutputTokens:10000});
+}
+
+function normalizeRosterSectorV55(p){
+ const pos=String(p.position||'').toUpperCase().trim(),sec=String(p.sector||'').toUpperCase();
+ if(['PL','ED','EE'].includes(pos)||sec==='ATA')return 'ATA';
+ if(['MDC','MC','MCO','MD','ME'].includes(pos)||sec==='MEI')return 'MEI';
+ if(['DD','DC','DE'].includes(pos)||sec==='DEF')return 'DEF';
+ if(pos==='GR'||sec==='GOL')return 'GOL';return 'NI';
+}
+function rosterAnalysisHtmlV55(s){
+ const r=(s.roster||[]).map(p=>({...p,sector:normalizeRosterSectorV55(p)}));
+ const groups=[['ATA','Avançados'],['MEI','Médios'],['DEF','Defesas'],['GOL','Guarda-redes']];
+ return `<div class="result-card"><h3>Elenco · Slot ${s.slotNumber}</h3><div class="kpis"><div class="kpi"><span>Jogadores</span><b>${r.length}</b></div><div class="kpi"><span>Valor elenco</span><b>${formatMoney(s.myTeam?.squadValue)}</b></div><div class="kpi"><span>Em treino</span><b>${r.filter(x=>x.training).length}</b></div></div>${groups.map(([k,label])=>{const xs=r.filter(x=>x.sector===k);return `<div class="roster-group"><h4>${label} (${xs.length})</h4>${xs.length?`<div class="roster-list">${xs.map(x=>`<div class="roster-row"><b>${esc(x.name)}</b><span>${esc(x.position||'NI')} · ${esc(x.rating)} · ${esc(formatMoney(x.value))}</span>${x.training?'<em>🏋 Camisa laranja · treinando</em>':''}</div>`).join('')}</div>`:'<p class="muted small">Nenhum identificado</p>'}</div>`}).join('')}</div>`;
+}
+const renderAnalysisResultBaseV55=renderAnalysisResult;
+renderAnalysisResult=function(result){
+ if(analysisMode==='market'){
+  const s=state.slots[selectedSlot-1];if(els.coveragePanel)els.coveragePanel.classList.add('hidden');els.analysisResult.innerHTML=rosterAnalysisHtmlV55(s);return;
+ }
+ return renderAnalysisResultBaseV55(result);
+}
+
+function calendarOutcomeV55(x){
+ if(['V','E','D'].includes(String(x.outcome||'').toUpperCase()))return String(x.outcome).toUpperCase();
+ const m=String(x.result||'').match(/(\d+)\s*[-x×]\s*(\d+)/i);if(!m)return null;const a=Number(m[1]),b=Number(m[2]);return a>b?'V':a<b?'D':'E';
+}
+function calendarStatusV54(x,s,i){
+ const out=calendarOutcomeV55(x);
+ if(x.result)return `<span class="calendar-result ${out==='V'?'win':out==='D'?'loss':'draw'}"><b>${esc(out||'')}</b> · ${esc(x.result)}</span>`;
+ if(x.played)return `<span class="calendar-result ${out==='V'?'win':out==='D'?'loss':'draw'}"><b>${esc(out||'J')}</b></span>`;
+ if(x.skipped)return `<span class="muted">Ignorado</span>`;
+ if(!s.calendarAnchorAt||!x.dateTime)return `<span class="muted">Aguardando data/hora</span>`;
+ if(new Date(x.dateTime).getTime()<=Date.now())return x.tacticSnapshot?`<button class="btn tiny danger" onclick="resultModal(${s.slotNumber},${i})">Registrar resultado</button>`:`<span class="warn-text">Horário passou · sem tática registrada</span>`;
+ return `<span class="future-label">Agendado</span>`;
 }
 
 Object.assign(window,{applyCalendarAnchorV54,showView,setSelectedSlot,prepareReanalysis,configureSlot,saveSlotConfigV5,openCalendarForSlot,finishCompetition,confirmFinish,slotDetailModal,generateTacticForSlot,tacticModal,manualTacticModal,saveManualTactic,strong433Modal,generateStrong433,resultModal,saveResultV52,runSetupStep,scheduleModal,saveSchedule,downloadIcs,openMarketSnapshot,aiStrategyReview,strategyModal,renderInfo,updateEventIntel,rosterTransactionModal,saveRosterTransaction,saveVideoResultPosition,saveApiKey,clearApiKey,closeModal});
