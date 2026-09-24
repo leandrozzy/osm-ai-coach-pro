@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION='5.3.0-fast-ocr';
+const APP_VERSION='5.7.0-roster-market-history';
 const STATE_KEY='osm_ai_coach_pro_state_v52_clean';
 const SETTINGS_KEY='osm_ai_coach_pro_settings_v4';
 const API_KEY_STORAGE='osm_ai_coach_pro_gemini_key';
@@ -1540,7 +1540,7 @@ async function handleFiles(files){
     if(jobSlot===selectedSlot&&analysisMode===jobMode)renderResultVideo(result);
    }else{
     const evidence=selectVisualEvidence(frames,evidenceLimitForMode(jobMode));setProgress(58,'Lendo elenco e posições…');
-    result=await analyzeOcrPackage(ocr,evidence);applyVisionResult(result);const ss=state.slots[jobSlot-1];ss.roster=(ss.roster||[]).map(p=>({...p,sector:normalizeRosterSectorV55(p),training:p.training===true}));ss.lastRosterSnapshotAt=nowIso();recalculateSquadValue(ss);ss.market=[];
+    result=await analyzeOcrPackage(ocr,evidence);applyVisionResult(result);const ss=state.slots[jobSlot-1];ss.roster=(ss.roster||[]).map(p=>({...p,sector:normalizeRosterSectorV55(p),training:p.training===true}));finalizeRosterSnapshotV57(ss);ss.lastRosterSnapshotAt=nowIso();ss.market=[];
     if(jobSlot===selectedSlot&&analysisMode===jobMode)renderAnalysisResult(result);
    }
   }
@@ -1625,14 +1625,14 @@ REGRAS DE POSIÇÃO — PRIORIDADE MÁXIMA:
 3. Rating principal: ATA para avançados; MED para médios; DEF para defesas; GR para guarda-redes.
 
 TREINAMENTO — REGRA VISUAL RÍGIDA:
-- training=true SOMENTE quando a CAMISA/ÍCONE DO JOGADOR no extremo ESQUERDO da própria linha estiver LARANJA.
+- training=true SOMENTE quando a CAMISA/ÍCONE DO JOGADOR no extremo ESQUERDO da própria linha estiver LARANJA. Podem existir de 0 a 5 jogadores treinando; NÃO assuma que são 4.
 - O pequeno cartão/retângulo amarelo do lado DIREITO da linha NÃO é treino.
 - Barras verdes/laranjas de condição/moral NÃO são treino.
 - Não marque Conor nem qualquer outro jogador como treinando sem camisa laranja à esquerda.
 
 OUTRAS REGRAS:
 - Consolide jogadores repetidos ao rolar a tela.
-- Extraia nome, section/sector, position, rating, age, value e training.
+- Extraia nome, section/sector, position, rating, age, value e training. NÃO repita o mesmo jogador quando ele aparecer em quadros diferentes. Se a tela mostrar a quantidade total de jogadores, myTeam.playerCount deve receber exatamente esse total.
 - squadValue = soma dos valores visíveis consolidados quando todos forem legíveis; playerCount = quantidade consolidada.
 - Não invente jogadores nem mercado.
 
@@ -1738,6 +1738,56 @@ async function selectRequiredTacticFramesRobustV56(frames,ocr,slotNumber){
   if(ai.filter(x=>x.frame).length>=5)return ai;
  }catch(e){console.warn('Classificação visual falhou; usando classificador local',e)}
  return selectRequiredTacticFrames(frames,ocr);
+}
+
+
+// ===== v5.7: elenco deduplicado, treino 0-5, plano persistente e histórico completo =====
+function rosterNameKeyV57(name){return normalize(String(name||'').replace(/[^A-Za-zÀ-ÿ0-9 ]/g,' ').replace(/\s+/g,' ').trim())}
+function editDistanceV57(a,b){a=rosterNameKeyV57(a);b=rosterNameKeyV57(b);const m=a.length,n=b.length;if(!m)return n;if(!n)return m;const d=Array.from({length:m+1},()=>Array(n+1).fill(0));for(let i=0;i<=m;i++)d[i][0]=i;for(let j=0;j<=n;j++)d[0][j]=j;for(let i=1;i<=m;i++)for(let j=1;j<=n;j++)d[i][j]=Math.min(d[i-1][j]+1,d[i][j-1]+1,d[i-1][j-1]+(a[i-1]===b[j-1]?0:1));return d[m][n]}
+function sameRosterPlayerV57(a,b){
+ const ak=rosterNameKeyV57(a?.name),bk=rosterNameKeyV57(b?.name);if(!ak||!bk)return false;if(ak===bk)return true;
+ const max=Math.max(ak.length,bk.length),dist=editDistanceV57(ak,bk),similar=max>=6&&dist<=1;
+ const samePos=a?.position&&b?.position&&String(a.position).toUpperCase()===String(b.position).toUpperCase();
+ const ar=Number(a?.rating),br=Number(b?.rating),closeRating=Number.isFinite(ar)&&Number.isFinite(br)&&Math.abs(ar-br)<=1;
+ return similar&&(samePos||closeRating);
+}
+function playerCompletenessV57(p){let n=0;for(const k of ['name','sector','position','rating','age','value'])if(p?.[k]!==null&&p?.[k]!==undefined&&p?.[k]!=='')n++;if(p?.training===true)n+=.5;return n}
+function mergeRosterPlayerV57(a,b){const best=playerCompletenessV57(b)>=playerCompletenessV57(a)?{...a,...b}:{...b,...a};
+ for(const k of ['name','sector','position','rating','age','value'])if((best[k]===null||best[k]===undefined||best[k]==='')&&(a?.[k]??b?.[k])!==undefined)best[k]=a?.[k]??b?.[k];
+ best.training=!!(a?.training||b?.training);best.forSale=!!(a?.forSale||b?.forSale);return best}
+function dedupeRosterV57(list,expectedCount=null){
+ const out=[];for(const raw of list||[]){if(!raw?.name)continue;const p={...raw,sector:normalizeRosterSectorV55(raw)};const i=out.findIndex(x=>sameRosterPlayerV57(x,p));if(i>=0)out[i]=mergeRosterPlayerV57(out[i],p);else out.push(p)}
+ // O OSM permite no máximo 5 jogadores simultaneamente em treino. Não assuma 4.
+ const training=out.filter(x=>x.training===true);if(training.length>5){training.slice(5).forEach(x=>x.training=false)}
+ const count=Number(expectedCount);if(Number.isFinite(count)&&count>0&&out.length>count){
+   out.sort((a,b)=>playerCompletenessV57(b)-playerCompletenessV57(a));out.length=count;
+ }
+ return out;
+}
+function mergePlayers(old,nw){return dedupeRosterV57([...(old||[]),...(nw||[])],null)}
+function finalizeRosterSnapshotV57(s){
+ const expected=Number(s.myTeam?.playerCount);s.roster=dedupeRosterV57(s.roster,Number.isFinite(expected)&&expected>0?expected:null);
+ s.myTeam.playerCount=s.roster.length;
+ recalculateSquadValue(s);
+ return s.roster;
+}
+function trainingSuggestions(s){const roster=(s.roster||[]).filter(p=>p.name);return [...roster].sort((a,b)=>{const aa=Number(a.age)||99,ba=Number(b.age)||99,ar=Number(a.rating)||0,br=Number(b.rating)||0;return (aa-ba)*2+(ar-br)}).slice(0,5)}
+function persistentStrategyHtmlV57(s){const p=s.marketStrategyAI;if(!p)return `<div class="card"><div class="market-head"><div><h3>Plano IA do elenco</h3><p class="muted small">Ainda não gerado.</p></div><button class="btn" onclick="aiStrategyReview(${s.slotNumber})">Gerar plano</button></div></div>`;
+ return `<div class="card market-ai-plan"><div class="market-head"><div><span class="eyebrow">PLANO IA SALVO</span><h3>Estratégia atual do Slot ${s.slotNumber}</h3><p class="tiny muted">Gerado em ${fmtDateTime(p.generatedAt)}</p></div><button class="btn secondary" onclick="aiStrategyReview(${s.slotNumber})">Gerar novo plano</button></div><p>${esc(p.summary)}</p><div class="plan-list">${(p.actions||[]).map((a,i)=>`<div class="plan-step"><span class="n">${esc(a.priority||i+1)}</span><div><b>${esc(a.player?`${a.player}: ${a.action}`:a.action)}</b><div class="small muted">${esc(a.why)}</div></div></div>`).join('')}</div>${(p.training||[]).length?`<h4>Treinamento</h4>${p.training.map(x=>`<div class="plan-step"><span class="n">🏋</span><div><b>${esc(x.player)}</b><div class="small muted">${esc(x.why)}</div></div></div>`).join('')}`:''}${(p.buyProfiles||[]).length?`<h4>Perfis para comprar</h4>${p.buyProfiles.map(x=>`<div class="plan-step"><span class="n">+</span><div><b>${esc(x.position)} · OVR ${esc(x.minimumRating)}+</b><div class="small muted">${esc(x.age)} · ${esc(x.budgetRule)} · ${esc(x.why)}</div></div></div>`).join('')}`:''}</div>`}
+function renderMarket(){
+ const s=state.slots[selectedSlot-1];if(!s||s.status!=='active'){els.marketContent.innerHTML=`<div class="card"><p class="muted">Slot ${selectedSlot} livre.</p></div>`;return}finalizeRosterSnapshotV57(s);const c=rosterCounts(s),train=trainingSuggestions(s),event=(state.eventIntel||localEventIntel()).events?.find(e=>e.status==='active');
+ els.marketContent.innerHTML=`${eventIntelHtml(state.eventIntel||localEventIntel())}${persistentStrategyHtmlV57(s)}<div class="card"><div class="market-head"><div><div class="slot-num">SLOT ${selectedSlot}</div><h3>Elenco · ${esc(s.teamName)}</h3></div><span class="status-pill">${esc(s.myTeam.playerCount||0)} jogadores</span></div><div class="kpis"><div class="kpi"><span>Valor elenco</span><b>${fmtMoney(s.myTeam.squadValue)}</b></div><div class="kpi"><span>ATA</span><b>${c.ATA}/4</b></div><div class="kpi"><span>MEI</span><b>${c.MEI}/6</b></div><div class="kpi"><span>DEF</span><b>${c.DEF}/6</b></div><div class="kpi"><span>GOL</span><b>${c.GOL}/2</b></div><div class="kpi"><span>Em treino</span><b>${(s.roster||[]).filter(x=>x.training).length}/5</b></div></div><div class="actions"><button class="btn" onclick="openMarketSnapshot(${selectedSlot})">Atualizar vídeo do elenco</button><button class="btn secondary" onclick="rosterTransactionModal(${selectedSlot},'buy')">+ Compra</button><button class="btn secondary" onclick="rosterTransactionModal(${selectedSlot},'sell')">− Venda</button></div></div><div class="card"><h3>Jogadores do elenco</h3>${playerTableHtml(s)}</div><div class="card"><h3>Treino recomendado agora</h3>${train.length?train.map((p,i)=>`<div class="plan-step"><span class="n">${i+1}</span><div><b>${esc(p.name)}</b><div class="small muted">${esc(p.position)} · OVR ${esc(p.rating)} · ${esc(p.age)} anos${p.training?' · já treinando':''}</div></div></div>`).join(''):'<p class="muted">Atualize o elenco para receber prioridades.</p>'}${event?`<div class="event-now"><b>⚡ ${esc(event.name)}</b><div class="small">${esc(event.strategy)}</div></div>`:''}</div>`;
+}
+async function aiStrategyReview(n,silent=false){const s=state.slots[n-1];if(!localStorage.getItem(API_KEY_STORAGE)){if(!silent)apiModal();return}finalizeRosterSnapshotV57(s);const roster=(s.roster||[]).map(p=>({name:p.name,sector:p.sector,position:p.position,rating:p.rating,value:p.value,age:p.age,training:!!p.training}));if(!roster.length){toast('Primeiro envie o vídeo do seu elenco');return}if(!silent)toast('Atualizando plano do elenco…');const prompt=`Você é especialista em evolução rápida de elenco no OSM. Use APENAS os jogadores presentes em roster. Pode recomendar vender ou treinar jogador POR NOME somente se esse nome existir exatamente em roster. Há de 0 a 5 jogadores treinando simultaneamente; training=true significa que a CAMISA LARANJA à esquerda foi detectada. Para compras, recomende PERFIS, nunca invente nomes disponíveis no mercado. Objetivo: aumentar força do XI e valor do elenco rápido, mantendo 4 ATA/6 MEI/6 DEF/2 GOL e até 4 vendas simultâneas. Retorne JSON {"summary":"","actions":[{"priority":1,"type":"sell|train|buy_profile|keep","player":null,"action":"","why":""}],"training":[{"player":"","why":""}],"buyProfiles":[{"position":"","minimumRating":null,"age":"","budgetRule":"","why":""}]}. Dados: ${JSON.stringify({overall:s.myTeam.overall,squadValue:s.myTeam.squadValue,playerCount:s.myTeam.playerCount,roster,transactions:(s.rosterTransactions||[]).slice(-12),event:state.eventIntel})}`;try{const p=await geminiJson([{text:prompt}],{temperature:.06,maxOutputTokens:4200});s.marketStrategyAI={...p,generatedAt:nowIso()};s.marketStrategyHistory=s.marketStrategyHistory||[];s.marketStrategyHistory.push(structuredClone(s.marketStrategyAI));if(s.marketStrategyHistory.length>20)s.marketStrategyHistory=s.marketStrategyHistory.slice(-20);saveState();renderMarket();if(!silent)toast('Novo plano salvo na aba Mercado')}catch(e){if(!silent)toast(e.message)}}
+function historySectionV57(title,body){return `<div class="card history-section"><h3>${esc(title)}</h3>${body}</div>`}
+function renderHistory(){
+ const s=state.slots[selectedSlot-1];if(!s){els.historyContent.innerHTML='';return}const games=s.results||[],tx=s.rosterTransactions||[],pos=s.positionHistory||[],archives=state.archives.filter(a=>Number(a.slotNumber)===selectedSlot),plans=s.marketStrategyHistory||[];const w=games.filter(r=>r.gf>r.ga).length,d=games.filter(r=>r.gf===r.ga).length,l=games.filter(r=>r.gf<r.ga).length;
+ const gamesHtml=games.length?games.slice().reverse().map(r=>`<div class="history-line"><div><b>${esc(s.teamName)} × ${esc(r.opponent)}</b><span>${fmtDateTime(r.createdAt)} · ${esc(r.context?.venue)} · ${esc(r.tactic?.formation)} ${esc(r.tactic?.gamePlan)}</span></div><strong>${esc(r.score)}</strong></div>`).join(''):'<p class="muted">Nenhum jogo registrado.</p>';
+ const txHtml=tx.length?tx.slice().reverse().map(x=>`<div class="history-line"><div><b>${x.type==='buy'?'🟢 Compra':'🔴 Venda'} · ${esc(x.player?.name)}</b><span>${fmtDateTime(x.at)} · ${esc(x.player?.position)} · OVR ${esc(x.player?.rating)}</span></div><strong>${esc(x.price||'')}</strong></div>`).join(''):'<p class="muted">Nenhuma compra/venda registrada.</p>';
+ const posHtml=pos.length?`<div class="position-chart">${pos.slice(-20).map(x=>{const p=Number(x.position)||20,h=Math.max(10,100-(p-1)*(85/19));return `<div class="pos-col"><div class="pos-bar" style="height:${h}%"><span>${p}º</span></div><small>R${esc(x.round??'')}</small></div>`}).join('')}</div>`:'<p class="muted">Sem evolução de posição registrada.</p>';
+ const planHtml=plans.length?plans.slice(-5).reverse().map(p=>`<div class="history-line"><div><b>Plano IA</b><span>${fmtDateTime(p.generatedAt)} · ${esc(p.summary)}</span></div></div>`).join(''):'<p class="muted">Nenhum plano anterior.</p>';
+ const archiveHtml=archives.length?archives.map(a=>`<div class="history-line"><div><b>${esc(a.competitionName)}</b><span>${esc(a.teamName)} · ${(a.results||[]).length} jogos · finalizada ${fmtDateTime(a.finishedAt)}</span></div></div>`).join(''):'<p class="muted">Nenhuma competição finalizada neste slot.</p>';
+ els.historyContent.innerHTML=`<div class="card"><div class="slot-num">SLOT ${selectedSlot}</div><h3>Histórico completo</h3><div class="kpis"><div class="kpi"><span>Jogos</span><b>${games.length}</b></div><div class="kpi"><span>V/E/D</span><b>${w}/${d}/${l}</b></div><div class="kpi"><span>Transferências</span><b>${tx.length}</b></div><div class="kpi"><span>Planos IA</span><b>${plans.length}</b></div></div></div>${historySectionV57('Partidas e táticas usadas',gamesHtml)}${historySectionV57('Compras e vendas',txHtml)}${historySectionV57('Evolução da posição',posHtml)}${historySectionV57('Planos de mercado anteriores',planHtml)}${historySectionV57('Competições finalizadas',archiveHtml)}`;
 }
 
 Object.assign(window,{applyCalendarAnchorV54,showView,setSelectedSlot,prepareReanalysis,configureSlot,saveSlotConfigV5,openCalendarForSlot,finishCompetition,confirmFinish,slotDetailModal,generateTacticForSlot,tacticModal,manualTacticModal,saveManualTactic,strong433Modal,generateStrong433,resultModal,saveResultV52,runSetupStep,scheduleModal,saveSchedule,downloadIcs,openMarketSnapshot,aiStrategyReview,strategyModal,renderInfo,updateEventIntel,rosterTransactionModal,saveRosterTransaction,saveVideoResultPosition,saveApiKey,clearApiKey,closeModal});
