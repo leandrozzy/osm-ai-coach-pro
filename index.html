@@ -16,7 +16,7 @@
       <div class="logo">O</div>
       <div>
         <h1>OSM AI Coach Pro</h1>
-        <p>Cloud · v5.2 · 4 slots</p>
+        <p>Cloud · v5.3 · 4 slots</p>
       </div>
     </div>
     <button id="apiButton" class="btn secondary">API Gemini</button>
@@ -132,6 +132,6 @@
   if ('serviceWorker' in navigator) navigator.serviceWorker.getRegistrations().then(rs=>rs.forEach(r=>r.unregister())).catch(()=>{});
   if ('caches' in window) caches.keys().then(keys=>Promise.all(keys.map(k=>caches.delete(k)))).catch(()=>{});
   </script>
-  <script src="app.js?v=5.2.0"></script>
+  <script src="app.js?v=5.3.0"></script>
 </body>
 </html>
