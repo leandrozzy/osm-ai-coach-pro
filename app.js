@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION='4.2.0-cloud-direct-video';
+const APP_VERSION='4.3.0-cloud-hybrid-ocr';
 const STATE_KEY='osm_ai_coach_pro_state_v4';
 const SETTINGS_KEY='osm_ai_coach_pro_settings_v4';
 const API_KEY_STORAGE='osm_ai_coach_pro_gemini_key';
@@ -11,7 +11,7 @@ const els={};
 
 function defaultSlot(n){return {slotNumber:n,status:'empty',teamName:null,competitionName:null,competitionType:null,round:null,totalRounds:null,createdAt:null,updatedAt:null,myTeam:{overall:null,goalkeeper:null,defence:null,midfield:null,attack:null,squadValue:null,playerCount:null,stadium:null,loginBonus:null,secretTraining:null,trainingCamp:null},opponent:{teamName:null,human:null,manager:null,overall:null,goalkeeper:null,defence:null,midfield:null,attack:null,squadValue:null,playerCount:null,stadium:null,loginBonus:null,secretTraining:null,trainingCamp:null,formation:null,style:null,marking:null,offside:null,tackling:null},match:{venue:null,refereeName:null,refereeColor:null,nextMatchAt:null,countdownText:null},roster:[],market:[],coverage:{},missing:[],tactic:null,marketPlan:null,results:[],notes:[]};}
 function defaultState(){return {version:APP_VERSION,slots:[1,2,3,4].map(defaultSlot),archives:[],eventIntel:null,lastAnalysisAt:null};}
-function defaultSettings(){return {model:'gemini-3.8-flash',notifyMinutes:20,userNick:'leandrozzy',notifyEnabled:true};}
+function defaultSettings(){return {model:'gemini-3.8-flash',notifyMinutes:20,userNick:'leandrozzy',notifyEnabled:true,localOcr:true};}
 function safeParse(s,fallback){try{return JSON.parse(s)}catch{return fallback}}
 function loadState(){const raw=safeParse(localStorage.getItem(STATE_KEY),null);if(!raw||!Array.isArray(raw.slots))return defaultState();const d=defaultState();d.archives=Array.isArray(raw.archives)?raw.archives:[];d.eventIntel=raw.eventIntel||null;d.lastAnalysisAt=raw.lastAnalysisAt||null;d.slots=[1,2,3,4].map(n=>deepMerge(defaultSlot(n),raw.slots.find(x=>Number(x.slotNumber)===n)||{}));return d}
 function loadSettings(){return {...defaultSettings(),...safeParse(localStorage.getItem(SETTINGS_KEY),{})}}
@@ -86,20 +86,27 @@ async function handleFiles(files){
    let result;
    if(video){
      renderVideoPreview(video);
-     setProgress(8,`Preparando ${video.name}…`);
-     result=await analyzeVideoDirect(video);
+     setProgress(6,'Selecionando quadros importantes localmente…');
+     const frames=await extractVideoFramesFast(video,analysisMode==='tactic'?8:10);
+     renderFramePreview(frames.slice(0,6));
+     setProgress(20,'Lendo texto localmente com OCR…');
+     const ocr=await runLocalOcr(frames);
+     setProgress(55,'Montando os campos para a IA…');
+     const evidence=selectVisualEvidence(frames,analysisMode==='tactic'?2:1);
+     result=await analyzeOcrPackage(ocr,evidence);
    }else if(images.length){
      setProgress(10,'Preparando imagens…');
      const frames=[];
      for(const f of images)frames.push(await imageFileToFrame(f));
-     renderFramePreview(frames.slice(0,4));
-     result=await analyzeImagesDirect(frames.slice(0,6));
+     renderFramePreview(frames.slice(0,6));
+     setProgress(28,'Lendo texto localmente com OCR…');
+     const ocr=await runLocalOcr(frames.slice(0,8));
+     result=await analyzeOcrPackage(ocr,selectVisualEvidence(frames,2));
    }else throw new Error('Selecione um vídeo ou imagens do OSM.');
+
    setProgress(78,'Atualizando o slot…');
    applyVisionResult(result);
-   if(analysisMode==='tactic'){
-      applyRecommendedTactics(result);
-   }
+   if(analysisMode==='tactic')applyRecommendedTactics(result);
    renderAnalysisResult(result);
    state.lastAnalysisAt=nowIso();
    saveState();
@@ -107,11 +114,71 @@ async function handleFiles(files){
    toast(analysisMode==='tactic'?'Partida analisada e tática gerada':'Mercado atualizado');
  }catch(e){
    console.error(e);
-   els.analysisResult.innerHTML=`<div class="result-card"><h3 class="danger-text">Não foi possível concluir</h3><p>${esc(e.message||e)}</p><p class="muted small">O vídeo não foi misturado com a outra análise. Você pode tentar novamente sem trocar de tela.</p></div>`;
+   els.analysisResult.innerHTML=`<div class="result-card"><h3 class="danger-text">Não foi possível concluir</h3><p>${esc(e.message||e)}</p><p class="muted small">O app usa OCR local primeiro. Se o OCR falhar, tente um vídeo mais curto e pare 1–2 segundos em cada tela.</p></div>`;
    setProgress(100,'Falha na análise');
- }finally{
-   setTimeout(()=>els.analysisProgress.classList.add('hidden'),1500);
+ }finally{setTimeout(()=>els.analysisProgress.classList.add('hidden'),1500)}
+}
+
+async function extractVideoFramesFast(file,maxFrames=8){
+ const url=URL.createObjectURL(file),v=document.createElement('video');
+ v.src=url;v.muted=true;v.playsInline=true;v.preload='metadata';
+ await new Promise((res,rej)=>{v.onloadedmetadata=res;v.onerror=()=>rej(new Error(`Não consegui abrir ${file.name}`))});
+ const dur=Math.max(.2,v.duration||1),times=[];
+ for(let i=0;i<maxFrames;i++)times.push(Math.min(dur-.08,Math.max(.08,(dur*(i+.5))/maxFrames)));
+ const frames=[];
+ let prev=null;
+ for(const t of times){
+   await seekVideo(v,t);
+   const f=captureVideoFrame(v,t,file.name),d=prev?pixelDiff(prev,f.thumb):100;
+   prev=f.thumb;f.score=d;
+   if(d>=3||frames.length<3)frames.push(f);
  }
+ URL.revokeObjectURL(url);
+ return dedupeFrames(frames,maxFrames);
+}
+
+async function runLocalOcr(frames){
+ if(!window.Tesseract)throw new Error('OCR local não carregou. Recarregue a página e tente novamente.');
+ const results=[];
+ let worker=null;
+ try{
+   worker=await Tesseract.createWorker('por+eng',1,{
+     logger:m=>{
+       if(m.status==='recognizing text'&&m.progress) setProgress(20+Math.round(m.progress*28),`OCR local ${Math.round(m.progress*100)}%…`);
+     }
+   });
+ }catch{
+   worker=await Tesseract.createWorker('eng',1,{logger:m=>{if(m.status==='recognizing text'&&m.progress)setProgress(20+Math.round(m.progress*28),`OCR local ${Math.round(m.progress*100)}%…`)}})
+ }
+ try{
+   for(let i=0;i<frames.length;i++){
+     setProgress(22+Math.round((i/Math.max(1,frames.length))*26),`OCR quadro ${i+1}/${frames.length}…`);
+     const prepared=preprocessForOcr(frames[i].dataUrl);
+     const {data}=await worker.recognize(prepared);
+     const text=cleanOcrText(data?.text||'');
+     if(text.length>5)results.push({frame:i+1,time:Math.round(frames[i].time||0),text});
+   }
+ }finally{if(worker)await worker.terminate()}
+ return {mode:analysisMode,frames:results,joined:results.map(x=>`[Quadro ${x.frame} ~${x.time}s]\n${x.text}`).join('\n\n')};
+}
+
+function preprocessForOcr(dataUrl){
+ const img=document.createElement('img');img.src=dataUrl;
+ // Tesseract accepts the data URL directly. Keeping original preserves small colored UI text better than hard thresholding.
+ return dataUrl;
+}
+function cleanOcrText(t){return String(t||'').replace(/[ \t]+/g,' ').replace(/\n{3,}/g,'\n\n').trim()}
+function selectVisualEvidence(frames,n=2){
+ if(!frames.length)return [];
+ const ranked=[...frames].sort((a,b)=>(b.score||0)-(a.score||0));
+ const out=[];
+ for(const f of ranked){if(out.length>=n)break;if(!out.some(x=>Math.abs((x.time||0)-(f.time||0))<1.2))out.push(f)}
+ return out;
+}
+async function analyzeOcrPackage(ocr,evidence){
+ const parts=[{text:hybridPrompt(ocr)}];
+ for(const f of evidence)parts.push({text:`Imagem de apoio ~${Math.round(f.time||0)}s. Use apenas para conferir elementos visuais que o OCR não captura bem.`},{inlineData:{mimeType:f.mimeType,data:f.base64}});
+ return geminiJson(parts,{temperature:.03,maxOutputTokens:8500});
 }
 
 function renderVideoPreview(file){
@@ -206,6 +273,53 @@ function canvasFrameFromImage(img,t,name){const maxW=1280,scale=Math.min(1,maxW/
 function pixelDiff(a,b){if(!a||!b||a.length!==b.length)return 100;let s=0;for(let i=0;i<a.length;i++)s+=Math.abs(a[i]-b[i]);return s/a.length}
 function dedupeFrames(frames,max){if(frames.length<=max)return frames.sort((a,b)=>(a.time||0)-(b.time||0));const keep=[];const byScore=[...frames].sort((a,b)=>(b.score||0)-(a.score||0));for(const f of byScore){if(keep.length>=max)break;if(!keep.some(k=>k.name===f.name&&Math.abs((k.time||0)-(f.time||0))<1.2))keep.push(f)}return keep.sort((a,b)=>a.name.localeCompare(b.name)||(a.time||0)-(b.time||0))}
 function renderFramePreview(frames){els.mediaPreview.innerHTML=frames.slice(0,12).map(f=>`<img src="${f.dataUrl}" title="${esc(f.name)} ${Math.round(f.time||0)}s">`).join('')}
+
+
+function hybridPrompt(ocr){
+ const target=els.slotTarget.value;
+ const slotHint=target==='auto'?'detectar pelo conteúdo':`usar Slot ${target}`;
+ const baseKnown=target!=='auto'&&state.slots[Number(target)-1]?state.slots[Number(target)-1]:null;
+ if(analysisMode==='tactic')return `Você é um especialista em OSM 26. O navegador já executou OCR LOCAL no vídeo. Portanto, não precisa reler o vídeo inteiro. Use o TEXTO OCR abaixo como fonte principal e as poucas imagens anexadas apenas para confirmar itens visuais.
+
+DESTINO: ${slotHint}.
+DADOS JÁ SALVOS NO SLOT (podem estar desatualizados; preserve apenas o que não for contradito pelo OCR): ${JSON.stringify(baseKnown?{
+teamName:baseKnown.teamName,competitionName:baseKnown.competitionName,competitionType:baseKnown.competitionType,round:baseKnown.round,totalRounds:baseKnown.totalRounds
+}:null)}
+
+TEXTO OCR DO VÍDEO:
+${ocr.joined}
+
+TAREFA:
+1. Estruture os dados da partida sem inventar nada.
+2. Identifique meu time/rival, força geral, GOL/DEF/MEI/ATA quando visível, casa/fora, árbitro, humano/CPU, bônus, CT/treino secreto, estádio e horário.
+3. Do Data Analyst rival, extraia formação, estilo/plano, marcação e impedimento.
+4. Gere UMA tática final completa visando maximizar a chance de vitória.
+5. Se um dado não está claro no OCR nem nas imagens, use null.
+6. Não confunda a minha tática atual com a tática do rival.
+7. sliders pressure, mentality e tempo: inteiros 0–100.
+8. Considere também o histórico aprendido do slot, fornecido abaixo:
+${JSON.stringify(baseKnown?buildLearningSummary(baseKnown):null)}
+
+RETORNE APENAS JSON:
+{"captures":[{"slotNumber":1,"confidence":0.0,"screensSeen":[],"teamName":null,"competitionName":null,"competitionType":null,"round":null,"totalRounds":null,"myTeam":{"overall":null,"goalkeeper":null,"defence":null,"midfield":null,"attack":null,"squadValue":null,"playerCount":null,"stadium":null,"loginBonus":null,"secretTraining":null,"trainingCamp":null},"opponent":{"teamName":null,"human":null,"manager":null,"overall":null,"goalkeeper":null,"defence":null,"midfield":null,"attack":null,"squadValue":null,"playerCount":null,"stadium":null,"loginBonus":null,"secretTraining":null,"trainingCamp":null,"formation":null,"style":null,"marking":null,"offside":null,"tackling":null},"match":{"venue":null,"refereeName":null,"refereeColor":null,"exactDateTimeText":null,"countdownText":null},"roster":[],"market":[],"result":{},"missing":[],"recommendedTactic":{"formation":"","gamePlan":"","pressure":0,"mentality":0,"tempo":0,"marking":"À zona","offside":"Não","tackling":"Normal","attackInstruction":"","midfieldInstruction":"","defenceInstruction":"","confidence":"média","reason":""}}]}`;
+
+ return `Você é um especialista em mercado/evolução de elenco no OSM 26. O navegador já rodou OCR LOCAL no vídeo. Use o texto OCR como fonte principal e as poucas imagens apenas para confirmar ícones.
+
+DESTINO: ${slotHint}
+TEXTO OCR:
+${ocr.joined}
+
+REGRAS:
+- Não gere tática de partida.
+- Extraia elenco, posição, rating, valor, idade, treinamento e jogadores à venda.
+- Camisa/ícone laranja = EM TREINAMENTO, não venda.
+- Venda = setas/ícone de transferência.
+- Extraia lista de transferências com nome, posição, rating, idade e preço.
+- Se não estiver claro, use null.
+
+RETORNE APENAS JSON:
+{"captures":[{"slotNumber":1,"confidence":0.0,"screensSeen":["squad","training","market"],"teamName":null,"competitionName":null,"competitionType":null,"round":null,"totalRounds":null,"myTeam":{},"opponent":{},"match":{},"roster":[{"name":"","position":null,"rating":null,"value":null,"age":null,"training":false,"forSale":false}],"market":[{"name":"","position":null,"rating":null,"attack":null,"defence":null,"value":null,"price":null,"age":null,"club":null}],"result":{},"missing":[]}]}`;
+}
 
 function visionPrompt(){
  const target=els.slotTarget.value;
@@ -325,7 +439,46 @@ function parseLooseDateTime(text){if(!text)return null;const d=new Date(text);re
 function recordExtractedResult(s,r){if((s.results||[]).some(x=>x.score===r.score&&x.opponent===r.opponent))return;s.results=s.results||[];s.results.push({createdAt:nowIso(),score:r.score,gf:r.gf,ga:r.ga,opponent:r.opponent||s.opponent.teamName,stats:r.stats||{},tactic:s.tactic?structuredClone(s.tactic):null})}
 function renderAnalysisResult(result){const caps=result.captures||[];const cov={};for(const c of caps)for(const x of c.screensSeen||[])cov[x]=true;els.coveragePanel.classList.remove('hidden');els.coveragePanel.innerHTML=`<b>Cobertura detectada</b><div class="coverage-grid">${Object.entries(COVERAGE_LABELS).map(([k,l])=>`<div class="coverage-item ${cov[k]?'ok':'no'}">${cov[k]?'✓':'○'} ${esc(l)}</div>`).join('')}</div>`;els.analysisResult.innerHTML=caps.map(c=>{const n=resolveCaptureSlot(c);return `<div class="result-card"><h3>${n?`Slot ${n} · `:''}${esc(c.teamName||'Time não identificado')}</h3><div class="data-grid"><div class="data-cell"><span>Adversário</span><b>${esc(c.opponent?.teamName)}</b></div><div class="data-cell"><span>Força</span><b>${esc(c.myTeam?.overall)} × ${esc(c.opponent?.overall)}</b></div><div class="data-cell"><span>Formação rival</span><b>${esc(c.opponent?.formation)}</b></div><div class="data-cell"><span>Mercado</span><b>${(c.market||[]).length} jogadores</b></div></div>${c.recommendedTactic?`<p class="small good-text"><b>Tática gerada no mesmo processamento:</b> ${esc(c.recommendedTactic.formation)} · ${esc(c.recommendedTactic.gamePlan)} · P ${esc(c.recommendedTactic.pressure)} / E ${esc(c.recommendedTactic.mentality)} / R ${esc(c.recommendedTactic.tempo)}</p>`:''}${c.missing?.length?`<p class="small warn-text">Ainda faltou mostrar: ${c.missing.map(esc).join(', ')}</p>`:'<p class="small good-text">Leitura principal completa.</p>'}</div>`}).join('')||'<div class="result-card">Nenhum slot foi identificado.</div>'}
 
-function tacticContext(s){const recent=(s.results||[]).slice(-8).map(r=>({opponent:r.opponent,score:r.score,result:resultLabel(r),tactic:r.tactic}));return {slotNumber:s.slotNumber,competitionType:s.competitionType,teamName:s.teamName,round:s.round,totalRounds:s.totalRounds,myTeam:s.myTeam,opponent:s.opponent,match:s.match,recentResults:recent,allowedFormations:FORMATIONS,allowedGamePlans:GAME_PLANS}}
+
+function strengthBucket(s){
+ const a=Number(s.myTeam?.overall),b=Number(s.opponent?.overall);
+ if(!Number.isFinite(a)||!Number.isFinite(b))return 'unknown';
+ const d=a-b;
+ if(d>=20)return 'much_stronger';
+ if(d>=7)return 'stronger';
+ if(d>-7)return 'balanced';
+ if(d>-15)return 'weaker';
+ return 'much_weaker';
+}
+function tacticSignature(t){
+ if(!t)return null;
+ return [t.formation,t.gamePlan,t.pressure,t.mentality,t.tempo,t.marking,t.offside,t.tackling,t.attackInstruction,t.midfieldInstruction,t.defenceInstruction].join('|');
+}
+function buildLearningSummary(s){
+ const results=(s.results||[]).filter(r=>Number.isFinite(r.gf)&&Number.isFinite(r.ga));
+ const rows=results.slice(-20).map(r=>({
+   outcome:r.gf>r.ga?'W':r.gf<r.ga?'L':'D',
+   gf:r.gf,ga:r.ga,
+   opponent:r.opponent,
+   opponentFormation:r.context?.oppFormation||null,
+   venue:r.context?.venue||null,
+   strengthDiff:(Number(r.context?.myOverall)-Number(r.context?.oppOverall)),
+   tactic:r.tactic||null,
+   tacticSignature:tacticSignature(r.tactic)
+ }));
+ const bySig={};
+ for(const r of rows){
+   if(!r.tacticSignature)continue;
+   bySig[r.tacticSignature]=bySig[r.tacticSignature]||{games:0,wins:0,draws:0,losses:0,gf:0,ga:0,tactic:r.tactic};
+   const x=bySig[r.tacticSignature];x.games++;x.gf+=r.gf;x.ga+=r.ga;
+   if(r.outcome==='W')x.wins++;else if(r.outcome==='D')x.draws++;else x.losses++;
+ }
+ const patterns=Object.values(bySig).sort((a,b)=>b.games-a.games).slice(0,5).map(x=>({
+   games:x.games,wins:x.wins,draws:x.draws,losses:x.losses,gf:x.gf,ga:x.ga,tactic:x.tactic
+ }));
+ return {games:rows.length,currentStrengthBucket:strengthBucket(s),recent:rows.slice(-8),patterns};
+}
+function tacticContext(s){const recent=(s.results||[]).slice(-8).map(r=>({opponent:r.opponent,score:r.score,result:resultLabel(r),tactic:r.tactic}));return {slotNumber:s.slotNumber,competitionType:s.competitionType,teamName:s.teamName,round:s.round,totalRounds:s.totalRounds,myTeam:s.myTeam,opponent:s.opponent,match:s.match,recentResults:recent,learningSummary:buildLearningSummary(s),allowedFormations:FORMATIONS,allowedGamePlans:GAME_PLANS}}
 function resultLabel(r){if(Number.isFinite(r.gf)&&Number.isFinite(r.ga))return r.gf>r.ga?'Vitória':r.gf<r.ga?'Derrota':'Empate';return null}
 async function generateTacticForSlot(n,silent=false){const s=state.slots[n-1];if(s.status!=='active')return;if(!localStorage.getItem(API_KEY_STORAGE)){apiModal('Salve sua chave Gemini para gerar táticas.');return}if(!silent)toast(`Gerando tática do Slot ${n}…`);try{const prompt=`Você é um analista especialista em OSM. Gere UMA tática completa, sem alternativas, visando maximizar a chance de vitória. Não existe garantia de vitória. Use somente os dados fornecidos e o histórico. Nunca invente dados ausentes.\n\nREGRAS:\n- Considere força relativa, setores, casa/fora, estádio quando relevante, humano x computador, CT, treino secreto, árbitro, Data Analyst e histórico recente.\n- Contra humano, dê mais peso ao risco de mudança tardia de tática; contra computador, use abordagem mais estável.\n- Se o adversário fez treino secreto e dados táticos não existem, não invente a formação rival.\n- Árbitro vermelho/rigoroso => evitar desarme excessivo. Árbitro permissivo pode aceitar mais agressividade.\n- Se a vantagem de força for superior a 20 pontos, prefira uma abordagem dominante 4-3-3 coerente, a menos que os dados mostrem motivo forte para não usar.\n- Formação deve estar em allowedFormations. Plano deve estar em allowedGamePlans.\n- Pressão, Estilo/Mentalidade e Temporização/Ritmo são inteiros 0-100.\n- Saída avançada deve usar termos curtos do jogo em português.\n- Retorne somente JSON válido.\n\nDADOS:\n${JSON.stringify(tacticContext(s))}\n\nFORMATO:\n{"formation":"4-3-3 A","gamePlan":"Jogar pelas alas","pressure":70,"mentality":70,"tempo":70,"marking":"À zona","offside":"Não","tackling":"Normal","attackInstruction":"Atacar apenas","midfieldInstruction":"Manter posição","defenceInstruction":"Defender atrás","confidence":"média","reason":"resumo curto baseado somente nos dados"}`;const t=await geminiJson([{text:prompt}],{temperature:.12,maxOutputTokens:2200});s.tactic=sanitizeTactic(t,s);s.updatedAt=nowIso();saveState();if(!silent)tacticModal(n);return s.tactic}catch(e){console.error(e);s.tactic=fallbackTactic(s);saveState();if(!silent){toast('Gemini falhou; foi usada a regra local de segurança');tacticModal(n)}return s.tactic}}
 function sanitizeTactic(t,s){const out={formation:FORMATIONS.includes(t.formation)?t.formation:null,gamePlan:GAME_PLANS.includes(t.gamePlan)?t.gamePlan:null,pressure:clampInt(t.pressure),mentality:clampInt(t.mentality),tempo:clampInt(t.tempo),marking:['À zona','Marcação à zona','Individual','Marcação individual'].includes(t.marking)?t.marking:'À zona',offside:/sim/i.test(String(t.offside))?'Sim':'Não',tackling:t.tackling||refereeTackling(s.match.refereeColor||s.match.refereeName),attackInstruction:t.attackInstruction||'Atacar apenas',midfieldInstruction:t.midfieldInstruction||'Manter posição',defenceInstruction:t.defenceInstruction||'Defender atrás',confidence:t.confidence||'média',reason:t.reason||'Gerada a partir dos dados disponíveis.',generatedAt:nowIso(),engine:'Gemini'};if(!out.formation||!out.gamePlan)return {...fallbackTactic(s),reason:out.reason,generatedAt:out.generatedAt,engine:'Híbrido'};return out}
@@ -339,7 +492,7 @@ function manualTacticModal(n){const s=state.slots[n-1]||defaultSlot(n),t=s.tacti
 function saveManualTactic(n){const s=state.slots[n-1];s.tactic={formation:document.getElementById('mtFormation').value,gamePlan:document.getElementById('mtPlan').value,pressure:clampInt(document.getElementById('mtPressure').value),mentality:clampInt(document.getElementById('mtMentality').value),tempo:clampInt(document.getElementById('mtTempo').value),marking:document.getElementById('mtMarking').value,offside:document.getElementById('mtOffside').value,tackling:document.getElementById('mtTackling').value,attackInstruction:document.getElementById('mtAttack').value.trim(),midfieldInstruction:document.getElementById('mtMid').value.trim(),defenceInstruction:document.getElementById('mtDef').value.trim(),confidence:'manual',reason:'Tática digitada manualmente a partir do OSM.',generatedAt:nowIso(),engine:'Manual'};s.updatedAt=nowIso();saveState();closeModal();toast('Tática usada salva')}
 
 function resultModal(n){const s=state.slots[n-1];openModal(`<h2>Resultado · Slot ${n}</h2><p class="muted">${esc(s.teamName)} × ${esc(s.opponent.teamName)}</p><div class="form-card"><div class="data-grid"><label>Meus gols<input id="resGF" type="number" min="0"></label><label>Gols rival<input id="resGA" type="number" min="0"></label></div><label>Observação opcional<input id="resNote" placeholder="Ex.: rival mudou para 4-5-1"></label><button class="btn" onclick="saveResult(${n})">Salvar resultado</button></div>`)}
-function saveResult(n){const gf=Number(document.getElementById('resGF').value),ga=Number(document.getElementById('resGA').value);if(!Number.isFinite(gf)||!Number.isFinite(ga)){toast('Informe o placar');return}const s=state.slots[n-1];s.results=s.results||[];s.results.push({createdAt:nowIso(),opponent:s.opponent.teamName,gf,ga,score:`${gf}-${ga}`,note:document.getElementById('resNote').value.trim()||null,tactic:s.tactic?structuredClone(s.tactic):null,context:{myOverall:s.myTeam.overall,oppOverall:s.opponent.overall,oppFormation:s.opponent.formation,venue:s.match.venue}});s.tactic=null;if(Number.isFinite(Number(s.round)))s.round=Number(s.round)+1;s.updatedAt=nowIso();saveState();closeModal();toast('Resultado salvo. O histórico será usado na próxima análise.')}
+function saveResult(n){const gf=Number(document.getElementById('resGF').value),ga=Number(document.getElementById('resGA').value);if(!Number.isFinite(gf)||!Number.isFinite(ga)){toast('Informe o placar');return}const s=state.slots[n-1];s.results=s.results||[];s.results.push({createdAt:nowIso(),opponent:s.opponent.teamName,gf,ga,score:`${gf}-${ga}`,note:document.getElementById('resNote').value.trim()||null,tactic:s.tactic?structuredClone(s.tactic):null,context:{myOverall:s.myTeam.overall,oppOverall:s.opponent.overall,oppFormation:s.opponent.formation,oppStyle:s.opponent.style,oppMarking:s.opponent.marking,oppOffside:s.opponent.offside,opponentHuman:s.opponent.human,venue:s.match.venue,referee:s.match.refereeColor||s.match.refereeName,trainingCamp:s.opponent.trainingCamp,secretTraining:s.opponent.secretTraining,strengthBucket:strengthBucket(s)}});s.tactic=null;if(Number.isFinite(Number(s.round)))s.round=Number(s.round)+1;s.updatedAt=nowIso();saveState();closeModal();toast('Resultado salvo. O histórico foi incorporado ao aprendizado do Slot '+n+'.')}
 
 function scheduleModal(n){const s=state.slots[n-1];let local='';if(s.match.nextMatchAt){const d=new Date(s.match.nextMatchAt);const off=d.getTimezoneOffset()*60000;local=new Date(d.getTime()-off).toISOString().slice(0,16)}openModal(`<h2>Horário · Slot ${n}</h2><div class="form-card"><label>Próxima partida<input id="scheduleAt" type="datetime-local" value="${esc(local)}"></label><button class="btn" onclick="saveSchedule(${n})">Salvar horário</button>${s.match.nextMatchAt?`<button class="btn secondary" onclick="downloadIcs(${n})">Adicionar ao calendário (alerta ${settings.notifyMinutes} min antes)</button>`:''}</div>`)}
 function saveSchedule(n){const v=document.getElementById('scheduleAt').value;if(!v)return;state.slots[n-1].match.nextMatchAt=new Date(v).toISOString();state.slots[n-1].updatedAt=nowIso();saveState();closeModal();toast('Horário salvo')}

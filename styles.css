@@ -13,3 +13,5 @@
 .video-selected b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .video-selected span{font-size:11px;color:var(--muted)}
 @media(max-width:640px){.video-selected video{width:120px}}
+
+.ocr-badge{display:inline-flex;align-items:center;gap:6px;padding:5px 8px;border-radius:999px;background:#103d35;color:#74e7bd;font-size:10px;font-weight:900}
