@@ -302,3 +302,197 @@ body{
   .sector-line.forwards{top:18px}.sector-line.mids{top:76px}.sector-line.defs{top:134px}
   .plan-visual{height:72px}
 }
+
+
+/* ===== v6.3 OSM-inspired polish ===== */
+:root{
+  --osmGold:#f3c85d;
+  --osmGoldSoft:#8e6a1d;
+  --osmPanelTop:#123357;
+  --osmPanelBottom:#0a1b2f;
+  --osmLight:#eef8ff;
+}
+body{
+  background:
+    radial-gradient(circle at 50% -12%, rgba(84,154,255,.18), transparent 28%),
+    radial-gradient(circle at 12% 8%, rgba(255,207,93,.08), transparent 18%),
+    linear-gradient(180deg,#08111c 0%, #0b1730 36%, #07111e 100%);
+}
+body:before{
+  content:"";position:fixed;inset:0;pointer-events:none;opacity:.35;
+  background:radial-gradient(circle at 50% 0%, rgba(255,255,255,.06), transparent 18%),
+             linear-gradient(90deg, transparent 0%, rgba(255,255,255,.015) 50%, transparent 100%);
+}
+.topbar{
+  background:
+    linear-gradient(180deg,rgba(13,30,52,.98),rgba(8,18,32,.95)),
+    radial-gradient(circle at 50% -30%,rgba(255,255,255,.12),transparent 45%);
+  border-bottom:1px solid #2b5074;
+}
+.topbar:after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;background:linear-gradient(90deg,transparent,rgba(243,200,93,.6),transparent)}
+.brand-wrap h1{font-size:19px;text-shadow:0 1px 1px rgba(0,0,0,.25)}
+.brand-wrap p{color:#a8c0d9}
+#apiButton{
+  background:linear-gradient(180deg,#18385b,#112742);
+  border:1px solid #41617f;
+  border-radius:16px;
+}
+.tabs{
+  background:linear-gradient(180deg,rgba(11,27,47,.98),rgba(9,18,33,.95));
+  border-bottom-color:#284665;
+  box-shadow:inset 0 -1px 0 rgba(255,255,255,.04);
+}
+.tab{
+  color:#b0c4dc;
+  border:1px solid transparent;
+  border-radius:14px;
+  padding:11px 15px;
+}
+.tab.active{
+  color:#fff;
+  border-color:#46698a;
+  background:linear-gradient(180deg,#23476d,#16304f);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.08), 0 8px 18px rgba(0,0,0,.18);
+}
+.tab:hover{border-color:#315170;color:#e7f3ff}
+.section-head h2{font-size:23px;color:#f6fbff}
+.eyebrow{color:#f3c85d}
+.card,.hero-card,.slot-card,.result-card,.coverage-panel,.mode-btn,.slot-chip,.upload-zone,.modal-sheet{
+  border-radius:20px !important;
+}
+.card,.hero-card,.slot-card,.result-card,.coverage-panel{
+  background:
+    linear-gradient(180deg,rgba(21,53,87,.93),rgba(11,24,42,.97)) !important;
+  border-color:#2f5275 !important;
+}
+.card:after,.hero-card:after,.slot-card:after,.result-card:after,.coverage-panel:after{
+  content:"";position:absolute;inset:auto 14px 0 14px;height:1px;background:linear-gradient(90deg,transparent,rgba(243,200,93,.35),transparent)
+}
+.priority,.slot-num,.status-pill{letter-spacing:.06em;text-transform:uppercase}
+.priority{color:#ffd772 !important}
+.hero-card{
+  background:
+    radial-gradient(circle at 85% 15%, rgba(255,214,114,.08), transparent 18%),
+    linear-gradient(180deg,rgba(24,57,92,.96),rgba(11,24,42,.98)) !important;
+}
+.hero-card h2{font-size:26px}
+.slot-card .slot-team{font-size:20px;color:#f4f9ff}
+.slot-card .slot-comp{color:#a8bed6}
+.status-pill{
+  background:linear-gradient(180deg,#183754,#122741) !important;
+  border:1px solid #35597e;
+}
+.status-pill.ready{background:linear-gradient(180deg,#16493f,#103228) !important;border-color:#34d0ad;color:#9bf1cf}
+.slot-chip{
+  border-radius:16px !important;
+  background:linear-gradient(180deg,#15385f,#0c2038) !important;
+  border-color:#35597d !important;
+}
+.slot-chip.active{
+  background:linear-gradient(180deg,#155149,#0f302b) !important;
+  border-color:#3be0ba !important;
+}
+.mode-btn{
+  background:linear-gradient(180deg,#15385f,#102640) !important;
+  border-color:#35587d !important;
+}
+.mode-btn.active{
+  background:linear-gradient(180deg,#1b4e49,#102b29) !important;
+  border-color:#3adcba !important;
+}
+.mode-btn span{color:#c3d7ea}
+.upload-zone{
+  background:
+    radial-gradient(circle at 50% 0%, rgba(255,255,255,.06), transparent 28%),
+    linear-gradient(180deg,#11253d,#0c1c2e) !important;
+  border:1px dashed #4b7093 !important;
+}
+.upload-icon{
+  border-radius:18px !important;
+  background:linear-gradient(180deg,#1c4463,#11304a) !important;
+  color:#7af3d0 !important;
+}
+.coverage-item{
+  background:linear-gradient(180deg,#14304f,#0d2035) !important;
+  border-color:#305275 !important;
+}
+.simple-table thead th,.simple-table th{
+  background:rgba(5,16,29,.28);
+  color:#f9fcff;
+}
+.simple-table td,.simple-table th{padding:12px 10px}
+.simple-table tr:nth-child(even) td{background:rgba(255,255,255,.018)}
+.btn{
+  border-radius:16px !important;
+  font-weight:900;
+}
+.btn.secondary{
+  background:linear-gradient(180deg,#1a3a5b,#112642) !important;
+}
+.btn.danger{
+  background:linear-gradient(180deg,#d25a6c,#992f42) !important;
+}
+.global-job{
+  background:linear-gradient(180deg,#18385b,#112640);
+  border-bottom:1px solid #35597b;
+}
+.toast{
+  background:linear-gradient(180deg,#1a3a5c,#132843) !important;
+}
+
+/* Tática ainda mais próxima do estilo do jogo */
+.osm-tactic-top>div,.osm-bottom>div,.osm-sector-wrap,.osm-sliders{
+  background:
+    radial-gradient(circle at 50% 0%, rgba(255,255,255,.05), transparent 30%),
+    linear-gradient(180deg,#143152,#0c1e31) !important;
+  border-color:#365a7e !important;
+}
+.osm-tactic-top span,.osm-bottom span,.sector-values small{color:#f3c85d !important}
+.osm-tactic-top b,.osm-bottom b,.sector-values b{color:#f5fbff}
+.plan-visual,.sector-pitch,.formation-pitch{
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.08), 0 12px 20px rgba(0,0,0,.18)
+}
+.plan-visual{border:2px solid rgba(202,248,191,.55)}
+.sector-pitch{
+  background:linear-gradient(180deg,#22a93b,#0e7b22) !important;
+  border:2px solid #d8ffd0 !important;
+}
+.sector-pitch:before{
+  inset:12px !important;
+  border:2px solid rgba(241,255,240,.72) !important;
+  border-radius:10px !important;
+}
+.sector-pitch:after{left:14px !important;right:14px !important}
+.sector-chip{
+  background:rgba(6,18,29,.34) !important;
+  border:1px solid rgba(255,255,255,.18) !important;
+}
+.sector-line span{
+  background:rgba(7,18,28,.42) !important;
+  border-color:rgba(255,255,255,.16) !important;
+}
+.osm-slider-track{
+  height:13px !important;border-radius:999px !important;
+  background:linear-gradient(180deg,#173b58,#10253a) !important;
+}
+.osm-slider-track i{background:linear-gradient(90deg,#3ce0c2,#53a8ff,#ffd772) !important}
+.osm-slider-track em{border:2px solid rgba(14,34,54,.45)}
+.osm-bottom>div{min-height:105px}
+
+/* cards informativos e de calendário */
+.today-event,.timeline-item,.schedule-card,.info-card,.summary-card{
+  background:linear-gradient(180deg,#133051,#0c1f35);
+  border:1px solid #315376;border-radius:18px;box-shadow:0 14px 24px rgba(0,0,0,.18)
+}
+.timeline-item.overdue,.today-event.overdue{border-color:#b34d62;background:linear-gradient(180deg,#5a1e2b,#32151d)}
+.timeline-item.done,.today-event.done{border-color:#2f8f6e;background:linear-gradient(180deg,#12392f,#0d241e)}
+.progress-track{background:#12253b;border:1px solid #2b4d6f}
+.progress-bar{background:linear-gradient(90deg,#39d8b3,#53a8ff,#ffd772)}
+
+/* logo mais próxima de game app */
+.logo{
+  background:linear-gradient(180deg,#41dbc2,#4ca9ff 58%,#296fff) !important;
+  border-radius:16px !important;
+}
+.logo-ring{border-width:2.4px !important}
+.logo-chip{border-radius:9px !important;padding:2px 6px !important;box-shadow:0 2px 6px rgba(0,0,0,.18)}

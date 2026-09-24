@@ -2376,3 +2376,59 @@ function tacticVisualHtmlV60(t){
   </div>
  </div>`;
 }
+
+
+// ===== v6.3 OSM-inspired top-down field =====
+function formationCoordsV63(formation){
+  const rows = formationRowsV61(formation);
+  const total = rows.length;
+  const top = 18, bottom = 78;
+  const ys = total===1 ? [48] : Array.from({length:total}, (_,i)=> top + ((bottom-top)/(total-1))*i);
+  const points = [];
+  rows.forEach((count, idx)=>{
+    const spread = formationVariantSpreadV61(formation, idx, total);
+    let xs = spacedXsV61(count, spread).map(v=>Math.max(18, Math.min(102, v)));
+    if(count===1 && idx===0) xs = [60];
+    xs.forEach(x=> points.push({x,y:ys[idx],role:'line'}));
+  });
+  points.push({x:60,y:88,role:'gk'});
+  return points;
+}
+function formationPitchHtmlV61(formation){
+  const pts = formationCoordsV63(formation);
+  const circles = pts.map(p=>`<circle class="${p.role==='gk'?'player-dot gk':'player-dot'}" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${p.role==='gk'?4.5:4.1}"></circle>`).join('');
+  return `<div class="formation-pitch">
+    <svg viewBox="0 0 120 96" class="formation-svg" aria-label="Formação ${esc(formation)}">
+      <defs>
+        <linearGradient id="grassGradV63" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stop-color="#29ac3f"/>
+          <stop offset="100%" stop-color="#0f7b24"/>
+        </linearGradient>
+      </defs>
+      <rect x="6" y="4" width="108" height="88" rx="12" fill="url(#grassGradV63)" stroke="#dbffd5" stroke-width="2"/>
+      <rect x="16" y="12" width="88" height="72" rx="8" fill="none" stroke="#efffe7" stroke-width="1.8" opacity=".95"/>
+      <line x1="16" y1="48" x2="104" y2="48" stroke="#efffe7" stroke-width="1.8"/>
+      <circle cx="60" cy="48" r="9" fill="none" stroke="#efffe7" stroke-width="1.6"/>
+      <rect x="38" y="12" width="44" height="15" fill="none" stroke="#efffe7" stroke-width="1.5"/>
+      <rect x="48" y="12" width="24" height="7" fill="none" stroke="#efffe7" stroke-width="1.1"/>
+      <rect x="38" y="69" width="44" height="15" fill="none" stroke="#efffe7" stroke-width="1.5"/>
+      <rect x="48" y="77" width="24" height="7" fill="none" stroke="#efffe7" stroke-width="1.1"/>
+      ${circles}
+    </svg>
+  </div>`;
+}
+function sectorArrowSvgV62(kind,text){
+  const x = normalize(text);
+  let path='M16 26 L16 8 M16 8 L9 15 M16 8 L23 15', color='#70ddff';
+  if(kind==='attack'){
+    color = x.includes('def') ? '#ff9f79' : (x.includes('meio') ? '#8ee0ff' : '#70ddff');
+    path = x.includes('def') ? 'M16 6 L16 24 M16 24 L9 17 M16 24 L23 17' : (x.includes('meio') ? 'M6 16 L26 16 M26 16 L19 9 M26 16 L19 23' : 'M16 26 L16 8 M16 8 L9 15 M16 8 L23 15');
+  } else if(kind==='mid'){
+    color = x.includes('def') ? '#ffd772' : (x.includes('pression') || x.includes('frente') ? '#70ddff' : '#b9f7ab');
+    path = x.includes('def') ? 'M16 6 L16 24 M16 24 L9 17 M16 24 L23 17' : ((x.includes('pression') || x.includes('frente')) ? 'M16 26 L16 8 M16 8 L9 15 M16 8 L23 15' : 'M6 16 L26 16 M6 16 L13 9 M6 16 L13 23 M26 16 L19 9 M26 16 L19 23');
+  } else {
+    color = x.includes('atac') ? '#70ddff' : (x.includes('meio') ? '#b9f7ab' : '#ff9f79');
+    path = x.includes('atac') ? 'M16 26 L16 8 M16 8 L9 15 M16 8 L23 15' : (x.includes('meio') ? 'M16 16 L26 16 M26 16 L19 9 M26 16 L19 23' : 'M16 6 L16 24 M16 24 L9 17 M16 24 L23 17');
+  }
+  return `<span class="sector-chip ${kind}"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="${path}" fill="none" stroke="${color}" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>`;
+}
