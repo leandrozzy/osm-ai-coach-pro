@@ -7,7 +7,7 @@
   <meta name="description" content="OSM AI Coach Pro — análise por vídeo, táticas, mercado e histórico para 4 slots." />
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" href="icon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="styles.css?v=4.8.0" />
+  <link rel="stylesheet" href="styles.css?v=5.0.0" />
   <title>OSM AI Coach Pro</title>
 </head>
 <body>
@@ -16,7 +16,7 @@
       <div class="logo">O</div>
       <div>
         <h1>OSM AI Coach Pro</h1>
-        <p>Cloud · v4.9 · 4 slots</p>
+        <p>Cloud · v5.0 · 4 slots</p>
       </div>
     </div>
     <button id="apiButton" class="btn secondary">API Gemini</button>
@@ -27,6 +27,7 @@
     <button class="tab" data-view="analyze">Analisar</button>
     <button class="tab" data-view="market">Mercado</button>
     <button class="tab" data-view="history">Histórico</button>
+    <button class="tab" data-view="info">Informações</button>
     <button class="tab" data-view="settings">Config</button>
   </nav>
   <div id="slotSwitcher" class="slot-switcher" aria-label="Selecionar slot"></div>
@@ -82,13 +83,18 @@
     </section>
 
     <section id="view-market" class="view">
-      <div class="section-head"><div><span class="eyebrow">MERCADO</span><h2>Plano de evolução</h2></div><button id="updateEvents" class="btn secondary">Verificar eventos</button></div>
+      <div class="section-head"><div><span class="eyebrow">MERCADO</span><h2>Plano de evolução</h2></div><button id="updateEvents" class="btn secondary">Atualizar eventos</button></div>
       <div id="marketContent"></div>
     </section>
 
     <section id="view-history" class="view">
       <div class="section-head"><div><span class="eyebrow">HISTÓRICO</span><h2>Resultados e competições</h2></div></div>
       <div id="historyContent"></div>
+    </section>
+
+    <section id="view-info" class="view">
+      <div class="section-head"><div><span class="eyebrow">INFORMAÇÕES</span><h2>Slot, posição e calendário</h2></div></div>
+      <div id="infoContent"></div>
     </section>
 
     <section id="view-settings" class="view">
