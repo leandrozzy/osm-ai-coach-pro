@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION='4.3.0-cloud-hybrid-ocr';
+const APP_VERSION='4.4.0-cloud-slot-ocr';
 const STATE_KEY='osm_ai_coach_pro_state_v4';
 const SETTINGS_KEY='osm_ai_coach_pro_settings_v4';
 const API_KEY_STORAGE='osm_ai_coach_pro_gemini_key';
@@ -31,13 +31,13 @@ let settings=loadSettings();
 let notificationSeen=new Set();
 let analysisMode='tactic';
 
-function bindEls(){['apiButton','nextAction','slotsGrid','refreshCountdowns','chooseMedia','mediaInput','uploadZone','uploadTitle','uploadHelp','slotTarget','autoTactic','autoTacticRow','analysisGuide','analysisProgress','progressBar','progressText','mediaPreview','coveragePanel','analysisResult','marketContent','historyContent','updateEvents','modelSelect','notifyMinutes','userNick','notifyEnabled','requestNotification','saveSettings','exportData','importData','modal','modalBody','modalClose','toast'].forEach(id=>els[id]=document.getElementById(id));}
+function bindEls(){['apiButton','nextAction','activeTacticPanel','slotSwitcher','slotsGrid','refreshCountdowns','chooseMedia','mediaInput','uploadZone','uploadTitle','uploadHelp','slotTarget','autoTactic','autoTacticRow','analysisGuide','analysisProgress','progressBar','progressText','mediaPreview','coveragePanel','analysisResult','marketContent','historyContent','updateEvents','modelSelect','notifyMinutes','userNick','notifyEnabled','requestNotification','saveSettings','exportData','importData','modal','modalBody','modalClose','toast'].forEach(id=>els[id]=document.getElementById(id));}
 
-function init(){bindEls();bindNav();bindActions();bindAnalysisModes();hydrateSettings();renderAnalysisMode();renderAll();if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});setInterval(()=>{renderToday();checkNotifications()},30000);checkNotifications()}
+function init(){bindEls();bindNav();bindActions();bindAnalysisModes();hydrateSettings();renderSlotSwitcher();renderAnalysisMode();renderAll();if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});setInterval(()=>{renderToday();checkNotifications()},30000);checkNotifications()}
 function bindNav(){document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>showView(b.dataset.view)))}
 function bindAnalysisModes(){document.querySelectorAll('[data-analysis-mode]').forEach(b=>b.addEventListener('click',()=>{analysisMode=b.dataset.analysisMode;document.querySelectorAll('[data-analysis-mode]').forEach(x=>x.classList.toggle('active',x===b));clearAnalysisUi();renderAnalysisMode()}))}
 function clearAnalysisUi(){if(els.analysisResult)els.analysisResult.innerHTML='';if(els.coveragePanel){els.coveragePanel.innerHTML='';els.coveragePanel.classList.add('hidden')}if(els.mediaPreview)els.mediaPreview.innerHTML='';if(els.mediaInput)els.mediaInput.value='';if(els.analysisProgress)els.analysisProgress.classList.add('hidden')}
-function renderAnalysisMode(){if(!els.analysisGuide)return;const tactic=analysisMode==='tactic';els.uploadTitle.textContent=tactic?'Enviar vídeo da partida':'Enviar vídeo do mercado';els.uploadHelp.textContent=tactic?'Grave somente as telas necessárias para analisar a partida. O vídeo é enviado diretamente à IA com um único prompt.':'Grave elenco, treinamento e lista de transferências. Não precisa mostrar Data Analyst nem táticas.';els.autoTacticRow.classList.toggle('hidden',!tactic);els.analysisGuide.innerHTML=tactic?`<h3>Vídeo para gerar a tática</h3><p class="muted small">Mostre apenas estas telas, nesta ordem. Pare 1–2 segundos em cada uma.</p><div class="guide-grid"><div><b>1. Tela da partida</b><span>meu time, rival, força, local, árbitro, CT/treino secreto e bônus quando aparecer</span></div><div><b>2. Data Analyst</b><span>abra o relatório do adversário</span></div><div><b>3. Detalhes do Analyst</b><span>formação, estilo/plano, marcação e impedimento</span></div><div><b>4. Força por setor</b><span>GOL/DEF/MEI/ATA de ambos, se disponível</span></div><div><b>5. Horário</b><span>cronômetro ou horário da próxima partida</span></div></div><div class="actions" style="margin-top:12px"><button class="btn secondary" onclick="manualTacticModal(Number(document.getElementById('slotTarget').value)||1)">Digitar tática usada manualmente</button></div>`:`<h3>Vídeo para Mercado / Evolução</h3><p class="muted small">Este vídeo é separado do vídeo da tática.</p><div class="guide-grid"><div><b>1. Elenco completo</b><span>nome, posição, força/rating, valor e quantidade de jogadores</span></div><div><b>2. Treinamento</b><span>quem está treinando; camisa laranja = treino, não venda</span></div><div><b>3. Lista de transferências</b><span>jogadores disponíveis, posição, rating, idade e preço</span></div><div><b>4. Jogadores à venda</b><span>venda é indicada pelas setas de transferência</span></div></div>`}
+function renderAnalysisMode(){if(!els.analysisGuide)return;const tactic=analysisMode==='tactic';els.uploadTitle.textContent=tactic?'Enviar vídeo da partida':'Enviar vídeo do mercado';els.uploadHelp.textContent=tactic?'Grave as telas da partida e do Data Analyst. O OCR local reforçado tenta ler tudo antes de chamar a IA.':'Grave elenco, treinamento e lista de transferências. Não precisa mostrar Data Analyst nem táticas.';els.autoTacticRow.classList.toggle('hidden',!tactic);els.analysisGuide.innerHTML=tactic?`<h3>Vídeo para gerar a tática</h3><p class="muted small">Mostre apenas estas telas, nesta ordem. Pare 1–2 segundos em cada uma.</p><div class="guide-grid"><div><b>1. Tela da partida</b><span>meu time, rival, força, local, árbitro, CT/treino secreto e bônus quando aparecer</span></div><div><b>2. Data Analyst</b><span>abra o relatório do adversário</span></div><div><b>3. Detalhes do Analyst</b><span>formação, estilo/plano, marcação e impedimento</span></div><div><b>4. Força por setor</b><span>GOL/DEF/MEI/ATA de ambos, se disponível</span></div><div><b>5. Horário</b><span>cronômetro ou horário da próxima partida</span></div></div><div class="actions" style="margin-top:12px"><button class="btn secondary" onclick="manualTacticModal(Number(document.getElementById('slotTarget').value)||1)">Digitar tática usada manualmente</button></div>`:`<h3>Vídeo para Mercado / Evolução</h3><p class="muted small">Este vídeo é separado do vídeo da tática.</p><div class="guide-grid"><div><b>1. Elenco completo</b><span>nome, posição, força/rating, valor e quantidade de jogadores</span></div><div><b>2. Treinamento</b><span>quem está treinando; camisa laranja = treino, não venda</span></div><div><b>3. Lista de transferências</b><span>jogadores disponíveis, posição, rating, idade e preço</span></div><div><b>4. Jogadores à venda</b><span>venda é indicada pelas setas de transferência</span></div></div>`}
 
 function showView(name){document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x.dataset.view===name));document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));document.getElementById('view-'+name).classList.add('active');if(name==='market')renderMarket();if(name==='history')renderHistory()}
 function bindActions(){
@@ -87,12 +87,12 @@ async function handleFiles(files){
    if(video){
      renderVideoPreview(video);
      setProgress(6,'Selecionando quadros importantes localmente…');
-     const frames=await extractVideoFramesFast(video,analysisMode==='tactic'?8:10);
+     const frames=await extractVideoFramesFast(video,analysisMode==='tactic'?12:18);
      renderFramePreview(frames.slice(0,6));
      setProgress(20,'Lendo texto localmente com OCR…');
      const ocr=await runLocalOcr(frames);
      setProgress(55,'Montando os campos para a IA…');
-     const evidence=selectVisualEvidence(frames,analysisMode==='tactic'?2:1);
+     const evidence=selectVisualEvidence(frames,3);
      result=await analyzeOcrPackage(ocr,evidence);
    }else if(images.length){
      setProgress(10,'Preparando imagens…');
@@ -101,7 +101,7 @@ async function handleFiles(files){
      renderFramePreview(frames.slice(0,6));
      setProgress(28,'Lendo texto localmente com OCR…');
      const ocr=await runLocalOcr(frames.slice(0,8));
-     result=await analyzeOcrPackage(ocr,selectVisualEvidence(frames,2));
+     result=await analyzeOcrPackage(ocr,selectVisualEvidence(frames,3));
    }else throw new Error('Selecione um vídeo ou imagens do OSM.');
 
    setProgress(78,'Atualizando o slot…');
@@ -521,5 +521,245 @@ function exportBackup(){const payload={app:'OSM AI Coach Pro',version:APP_VERSIO
 function downloadBlob(text,name,type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
 function importBackup(e){const f=e.target.files?.[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{const d=JSON.parse(r.result);if(!d.state?.slots)throw new Error('Arquivo inválido');state=d.state;settings={...settings,...(d.settings||{})};saveSettingsObj();saveState();toast('Backup importado')}catch(err){toast(err.message)}};r.readAsText(f)}
 
-Object.assign(window,{showView,configureSlot,saveSlotConfig,finishCompetition,confirmFinish,slotDetailModal,generateTacticForSlot,tacticModal,manualTacticModal,saveManualTactic,resultModal,saveResult,scheduleModal,saveSchedule,downloadIcs,aiMarketPlan,marketPlanModal,saveApiKey,clearApiKey,closeModal});
+
+// ===== v4.4: slots persistentes, tática sempre visível, OCR reforçado e revalidação pré-jogo =====
+let selectedSlot=Number(localStorage.getItem('osm_ai_coach_selected_slot')||1);
+if(![1,2,3,4].includes(selectedSlot))selectedSlot=1;
+
+function renderSlotSwitcher(){
+ if(!els.slotSwitcher)return;
+ els.slotSwitcher.innerHTML=[1,2,3,4].map(n=>{
+   const s=state.slots[n-1],active=n===selectedSlot;
+   return `<button class="slot-chip ${active?'active':''}" onclick="setSelectedSlot(${n})">
+     <span>S${n}</span><small>${esc(s.teamName||'Livre')}</small>
+   </button>`;
+ }).join('');
+ if(els.slotTarget)els.slotTarget.value=String(selectedSlot);
+}
+function setSelectedSlot(n){
+ n=Number(n);if(![1,2,3,4].includes(n))return;
+ selectedSlot=n;localStorage.setItem('osm_ai_coach_selected_slot',String(n));
+ renderSlotSwitcher();
+ if(els.slotTarget)els.slotTarget.value=String(n);
+ renderToday();renderMarket();renderHistory();renderAnalysisMode();
+ toast(`Slot ${n} selecionado`);
+}
+function showView(name){
+ document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x.dataset.view===name));
+ document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+ document.getElementById('view-'+name).classList.add('active');
+ renderSlotSwitcher();
+ if(name==='market')renderMarket();
+ if(name==='history')renderHistory();
+ if(name==='analyze'&&els.slotTarget)els.slotTarget.value=String(selectedSlot);
+}
+function renderAll(){renderSlotSwitcher();renderToday();renderMarket();renderHistory();hydrateSettings()}
+
+function tacticRows(t){
+ return [
+  ['Formação',t?.formation],['Estilo de jogo',t?.gamePlan],['Pressão',t?.pressure],
+  ['Estilo / Mentalidade',t?.mentality],['Temporização / Ritmo',t?.tempo],
+  ['Marcação',t?.marking],['Fazer fora de jogo',t?.offside],['Desarme',t?.tackling],
+  ['Avançados',t?.attackInstruction],['Meio-campo',t?.midfieldInstruction],['Defesa',t?.defenceInstruction]
+ ];
+}
+function tacticAgeText(s){
+ if(!s?.tacticFreshAt)return 'Ainda não revalidada para este jogo';
+ const d=Date.now()-new Date(s.tacticFreshAt).getTime();
+ if(!Number.isFinite(d)||d<0)return 'Atualizada agora';
+ const m=Math.floor(d/60000);
+ return m<1?'Atualizada agora':`Atualizada há ${m} min`;
+}
+function shouldRefreshNearMatch(s){
+ if(!s?.match?.nextMatchAt)return !!s?.tacticNeedsRefresh;
+ const diff=new Date(s.match.nextMatchAt).getTime()-Date.now();
+ return !!s.tacticNeedsRefresh || (diff>0&&diff<=settings.notifyMinutes*60000);
+}
+function persistentTacticHtml(s){
+ if(!s||s.status!=='active')return '';
+ const near=shouldRefreshNearMatch(s);
+ if(!s.tactic)return `<div class="card tactic-persistent"><div class="tactic-head"><div><span class="eyebrow">TÁTICA · SLOT ${s.slotNumber}</span><h3>Sem tática para este jogo</h3></div></div><p class="muted">Faça a leitura do adversário antes da partida.</p><div class="actions"><button class="btn" onclick="prepareReanalysis(${s.slotNumber})">Analisar adversário agora</button></div></div>`;
+ return `<div class="card tactic-persistent ${near?'needs-refresh':''}">
+   <div class="tactic-head"><div><span class="eyebrow">TÁTICA ATUAL · SLOT ${s.slotNumber}</span><h3>${esc(s.teamName)} × ${esc(s.opponent.teamName)}</h3><p class="small ${near?'warn-text':'muted'}">${near?'⚠ Revalide a tática próximo do jogo':'✓ Tática disponível'} · ${esc(tacticAgeText(s))}</p></div><span class="status-pill ${near?'missing':'ready'}">${near?'Atualizar':'Pronta'}</span></div>
+   <table class="tactic-table persistent-table">${tacticRows(s.tactic).map(([k,v])=>`<tr><td>${esc(k)}</td><td><b>${esc(v)}</b></td></tr>`).join('')}</table>
+   <div class="actions">
+    <button class="btn" onclick="prepareReanalysis(${s.slotNumber})">${near?'Reanalisar adversário agora':'Atualizar tática'}</button>
+    <button class="btn secondary" onclick="manualTacticModal(${s.slotNumber})">Editar tática</button>
+    <button class="btn secondary" onclick="tacticModal(${s.slotNumber})">Abrir em tela cheia</button>
+   </div>
+ </div>`;
+}
+function renderToday(){
+ const action=chooseNextAction();
+ els.nextAction.innerHTML=action?`<div class="priority">PRÓXIMA AÇÃO · SLOT ${action.slot.slotNumber}</div><h2>${esc(action.title)}</h2><p class="muted">${esc(action.detail)}</p><div class="hero-actions">${action.button||''}</div>`:`<div class="priority">SEU DIA NO OSM</div><h2>Nenhuma partida configurada</h2><p class="muted">Selecione um slot e configure a competição.</p>`;
+ const sel=state.slots[selectedSlot-1];
+ if(els.activeTacticPanel)els.activeTacticPanel.innerHTML=persistentTacticHtml(sel);
+ els.slotsGrid.innerHTML=state.slots.map(slotCardHtml).join('');
+}
+function chooseNextAction(){
+ const s=state.slots[selectedSlot-1];
+ if(s?.status==='active'){
+   if(s.match?.nextMatchAt){
+     const ms=new Date(s.match.nextMatchAt).getTime()-Date.now();
+     if(ms>0&&ms<=settings.notifyMinutes*60000)return {slot:s,title:`Revalidar tática contra ${s.opponent.teamName||'o adversário'}`,detail:`Faltam ${countdown(s.match.nextMatchAt)}. Grave novamente a tela da partida e o Data Analyst para pegar mudanças de última hora.`,button:`<button class="btn" onclick="prepareReanalysis(${s.slotNumber})">Atualizar tática agora</button>`};
+   }
+   if(!s.tactic)return {slot:s,title:`Gerar tática contra ${s.opponent.teamName||'o adversário'}`,detail:'Faça a leitura atual do adversário.',button:`<button class="btn" onclick="prepareReanalysis(${s.slotNumber})">Analisar agora</button>`};
+   if(s.tacticNeedsRefresh)return {slot:s,title:'Tática precisa ser revalidada',detail:'O adversário pode ter mudado a configuração.',button:`<button class="btn" onclick="prepareReanalysis(${s.slotNumber})">Reanalisar</button>`};
+ }
+ return null;
+}
+function prepareReanalysis(n){
+ setSelectedSlot(n);analysisMode='tactic';
+ document.querySelectorAll('[data-analysis-mode]').forEach(x=>x.classList.toggle('active',x.dataset.analysisMode==='tactic'));
+ clearAnalysisUi();renderAnalysisMode();showView('analyze');
+ if(els.slotTarget)els.slotTarget.value=String(n);
+ setTimeout(()=>els.chooseMedia?.focus(),50);
+}
+function slotCardHtml(s){
+ const active=s.status==='active',selected=s.slotNumber===selectedSlot,missing=s.missing||[],ready=active&&missing.length===0,opp=s.opponent||{},me=s.myTeam||{};
+ return `<article class="slot-card ${selected?'selected-slot':''}" onclick="if(event.target.tagName!=='BUTTON')setSelectedSlot(${s.slotNumber})"><div class="slot-top"><div><div class="slot-num">SLOT ${s.slotNumber}${s.competitionType==='Batalha'?' · BATALHA':''}</div><div class="slot-team">${esc(s.teamName||'Slot disponível')}</div><div class="slot-comp">${esc(s.competitionName||'Sem competição')}</div></div><span class="status-pill ${ready?'ready':active?'missing':''}">${active?(s.tactic?'Tática pronta':ready?'Dados prontos':'Dados parciais'):'Livre'}</span></div>${active?`<div class="matchline"><b>${esc(opp.teamName||'Adversário NI')}</b><div class="small muted">${esc(s.match.venue||'Local NI')} · R${esc(s.round)}${s.totalRounds?'/'+esc(s.totalRounds):''} · ${s.match.nextMatchAt?countdown(s.match.nextMatchAt):'Horário NI'}</div></div><div class="kpis"><div class="kpi"><span>Força</span><b>${esc(me.overall)}</b></div><div class="kpi"><span>Rival</span><b>${esc(opp.overall)}</b></div><div class="kpi"><span>Formação rival</span><b>${esc(opp.formation)}</b></div><div class="kpi"><span>Tática</span><b>${s.tactic?'Pronta':'—'}</b></div></div><div class="actions"><button class="btn secondary" onclick="event.stopPropagation();setSelectedSlot(${s.slotNumber});slotDetailModal(${s.slotNumber})">Dados</button><button class="btn secondary" onclick="event.stopPropagation();setSelectedSlot(${s.slotNumber});configureSlot(${s.slotNumber})">Editar competição</button><button class="btn" onclick="event.stopPropagation();prepareReanalysis(${s.slotNumber})">${s.tactic?'Atualizar tática':'Gerar tática'}</button><button class="btn secondary" onclick="event.stopPropagation();setSelectedSlot(${s.slotNumber});resultModal(${s.slotNumber})">Resultado</button></div>`:`<p class="muted small" style="margin:14px 0">Slot livre.</p><div class="actions"><button class="btn" onclick="event.stopPropagation();setSelectedSlot(${s.slotNumber});configureSlot(${s.slotNumber})">Criar competição</button></div>`}</article>`;
+}
+
+function buildMissing(s,extra){
+ const m=[];
+ if(analysisMode==='tactic'){
+   if(!s.teamName)m.push('meu time');
+   if(!s.opponent.teamName)m.push('adversário');
+   if(s.myTeam.overall==null)m.push('minha força');
+   if(s.opponent.overall==null)m.push('força rival');
+   if(!s.opponent.formation)m.push('formação rival');
+   if(!s.opponent.style)m.push('plano rival');
+   if(!s.opponent.marking)m.push('marcação rival');
+   if(s.opponent.offside==null)m.push('impedimento rival');
+   if(!s.match.refereeColor&&!s.match.refereeName)m.push('árbitro');
+ }else{
+   if(!s.roster?.length)m.push('elenco');
+   if(!s.market?.length)m.push('lista de transferências');
+ }
+ for(const x of extra||[])if(x&&!m.includes(x))m.push(x);
+ return [...new Set(m)];
+}
+function applyVisionResult(result){
+ for(const c of result.captures||[]){
+   const n=resolveCaptureSlot(c);if(!n)continue;
+   const s=state.slots[n-1];s.status='active';s.createdAt=s.createdAt||nowIso();s.updatedAt=nowIso();
+   for(const k of ['teamName','competitionName','competitionType','round','totalRounds'])if(c[k]!==null&&c[k]!==undefined&&c[k]!=='')s[k]=c[k];
+   s.myTeam=mergeNonNull(s.myTeam,c.myTeam||{});s.opponent=mergeNonNull(s.opponent,c.opponent||{});s.match=mergeNonNull(s.match,c.match||{});
+   if(c.match?.countdownText)s.match.nextMatchAt=parseCountdownToIso(c.match.countdownText)||s.match.nextMatchAt;
+   if(c.match?.exactDateTimeText){const d=parseLooseDateTime(c.match.exactDateTimeText);if(d)s.match.nextMatchAt=d.toISOString()}
+   if(Array.isArray(c.roster)&&c.roster.length)s.roster=mergePlayers(s.roster,c.roster);
+   if(Array.isArray(c.market)&&c.market.length)s.market=mergePlayers(s.market,c.market);
+   s.coverage={...s.coverage,...Object.fromEntries((c.screensSeen||[]).map(x=>[x,true]))};
+   s.missing=buildMissing(s,c.missing||[]);
+   if(c.result?.score)recordExtractedResult(s,c.result);
+   s.marketPlan=buildLocalMarketPlan(s);
+ }
+}
+function sanitizeTactic(t,s){
+ const f=fallbackTactic(s),src=t||{};
+ return {
+  formation:FORMATIONS.includes(src.formation)?src.formation:f.formation,
+  gamePlan:GAME_PLANS.includes(src.gamePlan)?src.gamePlan:f.gamePlan,
+  pressure:clampInt(src.pressure)??f.pressure,
+  mentality:clampInt(src.mentality)??f.mentality,
+  tempo:clampInt(src.tempo)??f.tempo,
+  marking:['À zona','Marcação à zona','Individual','Marcação individual'].includes(src.marking)?src.marking:f.marking,
+  offside:/sim/i.test(String(src.offside))?'Sim':(/não|nao/i.test(String(src.offside))?'Não':f.offside),
+  tackling:src.tackling||f.tackling,
+  attackInstruction:src.attackInstruction||f.attackInstruction,
+  midfieldInstruction:src.midfieldInstruction||f.midfieldInstruction,
+  defenceInstruction:src.defenceInstruction||f.defenceInstruction,
+  confidence:src.confidence||'média',reason:src.reason||f.reason,generatedAt:nowIso(),engine:'Gemini'
+ };
+}
+function applyRecommendedTactics(result){
+ for(const c of result.captures||[]){
+   const n=resolveCaptureSlot(c);if(!n||!c.recommendedTactic)continue;
+   const s=state.slots[n-1];
+   s.tactic=sanitizeTactic(c.recommendedTactic,s);
+   s.tactic.engine='Gemini OCR';
+   s.tacticFreshAt=nowIso();s.tacticNeedsRefresh=false;
+   s.lastOpponentTacticSnapshot={formation:s.opponent.formation,style:s.opponent.style,marking:s.opponent.marking,offside:s.opponent.offside,at:nowIso()};
+ }
+}
+function saveManualTactic(n){
+ const s=state.slots[n-1];
+ s.tactic={formation:document.getElementById('mtFormation').value,gamePlan:document.getElementById('mtPlan').value,pressure:clampInt(document.getElementById('mtPressure').value),mentality:clampInt(document.getElementById('mtMentality').value),tempo:clampInt(document.getElementById('mtTempo').value),marking:document.getElementById('mtMarking').value,offside:document.getElementById('mtOffside').value,tackling:document.getElementById('mtTackling').value,attackInstruction:document.getElementById('mtAttack').value.trim(),midfieldInstruction:document.getElementById('mtMid').value.trim(),defenceInstruction:document.getElementById('mtDef').value.trim(),confidence:'manual',reason:'Tática editada manualmente.',generatedAt:nowIso(),engine:'Manual'};
+ s.tacticFreshAt=nowIso();s.tacticNeedsRefresh=false;s.updatedAt=nowIso();saveState();closeModal();toast('Tática atualizada');
+}
+
+async function extractVideoFramesFast(file,maxFrames=12){
+ const url=URL.createObjectURL(file),v=document.createElement('video');v.src=url;v.muted=true;v.playsInline=true;v.preload='metadata';
+ await new Promise((res,rej)=>{v.onloadedmetadata=res;v.onerror=()=>rej(new Error(`Não consegui abrir ${file.name}`))});
+ const dur=Math.max(.2,v.duration||1),samples=analysisMode==='market'?Math.max(18,maxFrames):Math.max(12,maxFrames),times=[];
+ for(let i=0;i<samples;i++)times.push(Math.min(dur-.08,Math.max(.08,(dur*(i+.35))/samples)));
+ const frames=[];let prev=null;
+ for(const t of times){
+  await seekVideo(v,t);const f=captureVideoFrame(v,t,file.name),d=prev?pixelDiff(prev,f.thumb):100;prev=f.thumb;f.score=d;
+  if(analysisMode==='market'||d>=2.2||frames.length<4)frames.push(f);
+ }
+ URL.revokeObjectURL(url);
+ return dedupeFrames(frames,analysisMode==='market'?18:12);
+}
+async function prepareOcrImage(dataUrl){
+ const img=await loadImage(dataUrl);
+ const scale=1.7,w=Math.round(img.width*scale),h=Math.round(img.height*scale);
+ const c=document.createElement('canvas');c.width=w;c.height=h*2;
+ const x=c.getContext('2d');
+ x.drawImage(img,0,0,w,h);
+ x.filter='grayscale(1) contrast(1.75) brightness(1.08)';
+ x.drawImage(img,0,h,w,h);x.filter='none';
+ return c.toDataURL('image/jpeg',.9);
+}
+async function runLocalOcr(frames){
+ if(!window.Tesseract)throw new Error('OCR local não carregou. Recarregue a página.');
+ const results=[];let worker;
+ try{worker=await Tesseract.createWorker('por+eng',1,{logger:m=>{if(m.status==='recognizing text'&&m.progress)setProgress(22+Math.round(m.progress*30),`OCR local ${Math.round(m.progress*100)}%…`)}})}
+ catch{worker=await Tesseract.createWorker('eng',1)}
+ try{
+  try{await worker.setParameters({tessedit_pageseg_mode:'6',preserve_interword_spaces:'1'})}catch{}
+  for(let i=0;i<frames.length;i++){
+    setProgress(22+Math.round((i/Math.max(1,frames.length))*30),`OCR reforçado ${i+1}/${frames.length}…`);
+    const prepared=await prepareOcrImage(frames[i].dataUrl);
+    const {data}=await worker.recognize(prepared);
+    const text=cleanOcrText(data?.text||'');
+    if(text.length>4)results.push({frame:i+1,time:Math.round(frames[i].time||0),confidence:data?.confidence??null,text});
+  }
+ }finally{if(worker)await worker.terminate()}
+ return {mode:analysisMode,frames:results,joined:results.map(x=>`[Quadro ${x.frame} ~${x.time}s conf=${Math.round(x.confidence||0)}]\n${x.text}`).join('\n\n')};
+}
+function selectVisualEvidence(frames,n=3){
+ if(!frames.length)return [];
+ const picks=[],indices=[0,Math.floor((frames.length-1)/2),frames.length-1];
+ for(const i of indices){const f=frames[i];if(f&&!picks.includes(f))picks.push(f)}
+ const ranked=[...frames].sort((a,b)=>(b.score||0)-(a.score||0));
+ for(const f of ranked){if(picks.length>=n)break;if(!picks.includes(f))picks.push(f)}
+ return picks.slice(0,n);
+}
+
+function renderMarket(){
+ const s=state.slots[selectedSlot-1];
+ els.marketContent.innerHTML=(state.eventIntel?eventIntelHtml(state.eventIntel):'')+(s?.status==='active'?marketSlotHtml(s):`<div class="card"><h3>Slot ${selectedSlot}</h3><p class="muted">Nenhuma competição ativa neste slot.</p></div>`);
+}
+function renderHistory(){
+ const s=state.slots[selectedSlot-1],rows=(s?.results||[]).map(r=>({...r,slotNumber:selectedSlot,teamName:s.teamName,competitionName:s.competitionName})).sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)));
+ const archives=state.archives.filter(a=>Number(a.slotNumber)===selectedSlot);
+ els.historyContent.innerHTML=`<div class="card"><div class="slot-num">SLOT ${selectedSlot}</div><h3>Partidas registradas</h3><p class="muted small">Cada resultado guarda contexto + tática usada e entra nas próximas recomendações.</p>${rows.length?`<table class="simple-table"><tr><th>Jogo</th><th>Placar</th><th>Resultado</th></tr>${rows.map(r=>`<tr><td>${esc(r.teamName)} × ${esc(r.opponent)}</td><td>${esc(r.score)}</td><td>${esc(resultLabel(r))}</td></tr>`).join('')}</table>`:`<p class="muted">Nenhum resultado neste slot.</p>`}</div><div class="section-head"><div><span class="eyebrow">ARQUIVO · SLOT ${selectedSlot}</span><h2>Competições finalizadas</h2></div></div>${archives.length?archives.map(a=>`<div class="card archive-card"><div class="slot-num">SLOT ${a.slotNumber} · ${esc(a.competitionType)}</div><h3 style="margin:4px 0">${esc(a.teamName)} · ${esc(a.competitionName)}</h3><p class="small muted">${(a.results||[]).length} resultados · finalizada em ${fmtDateTime(a.finishedAt)}</p></div>`).join(''):`<div class="card"><p class="muted">Nenhuma competição finalizada neste slot.</p></div>`}`;
+}
+function checkNotifications(){
+ if(!settings.notifyEnabled)return;
+ let changed=false;
+ for(const s of state.slots){
+  if(s.status!=='active'||!s.match.nextMatchAt)continue;
+  const t=new Date(s.match.nextMatchAt).getTime()-Date.now(),target=settings.notifyMinutes*60000;
+  if(t<=target&&t>0&&!s.tacticNeedsRefresh){s.tacticNeedsRefresh=true;changed=true}
+  if(t<=target&&t>target-90000){
+    const key=`${s.slotNumber}-${s.match.nextMatchAt}`;if(notificationSeen.has(key))continue;notificationSeen.add(key);
+    if('Notification'in window&&Notification.permission==='granted')new Notification(`OSM · Slot ${s.slotNumber}: atualizar tática agora`,{body:`Faltam ${settings.notifyMinutes} min para ${s.teamName||'seu time'} x ${s.opponent.teamName||'adversário'}. Abra o Pro e reanalise o Data Analyst.`,icon:'icon.svg'});
+  }
+ }
+ if(changed){localStorage.setItem(STATE_KEY,JSON.stringify(state));renderToday()}
+}
+
+Object.assign(window,{showView,setSelectedSlot,prepareReanalysis,configureSlot,saveSlotConfig,finishCompetition,confirmFinish,slotDetailModal,generateTacticForSlot,tacticModal,manualTacticModal,saveManualTactic,resultModal,saveResult,scheduleModal,saveSchedule,downloadIcs,aiMarketPlan,marketPlanModal,saveApiKey,clearApiKey,closeModal});
 document.addEventListener('DOMContentLoaded',init);
