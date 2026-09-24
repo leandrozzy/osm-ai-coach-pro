@@ -2432,3 +2432,128 @@ function sectorArrowSvgV62(kind,text){
   }
   return `<span class="sector-chip ${kind}"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="${path}" fill="none" stroke="${color}" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>`;
 }
+
+
+// ===== v6.4: fidelity fixes for tactic visuals =====
+function formationCoordsV64(formation){
+  const rawRows = formationRowsV61(formation);
+  const rows = [...rawRows].reverse(); // OSM notation is DEF-MID-ATT; render ATT at top, DEF near own goal.
+  const total = rows.length;
+  const top = 18, bottom = 76;
+  const ys = total===1 ? [48] : Array.from({length:total}, (_,i)=> top + ((bottom-top)/(total-1))*i);
+  const points = [];
+  rows.forEach((count, idx)=>{
+    const spread = formationVariantSpreadV61(formation, total-1-idx, total);
+    let xs = spacedXsV61(count, spread).map(v=>Math.max(18, Math.min(102, v)));
+    if(count===1) xs = [60];
+    xs.forEach(x=> points.push({x,y:ys[idx],role:'line'}));
+  });
+  points.push({x:60,y:87.5,role:'gk'});
+  return points;
+}
+function formationPitchHtmlV61(formation){
+  const pts = formationCoordsV64(formation);
+  const circles = pts.map(p=>`<circle class="${p.role==='gk'?'player-dot gk':'player-dot'}" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${p.role==='gk'?4.6:4.1}"></circle>`).join('');
+  return `<div class="formation-pitch">
+    <svg viewBox="0 0 120 96" class="formation-svg" aria-label="Formação ${esc(formation)}">
+      <defs>
+        <linearGradient id="grassGradV64" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stop-color="#28af40"/>
+          <stop offset="100%" stop-color="#0f7d25"/>
+        </linearGradient>
+      </defs>
+      <rect x="6" y="4" width="108" height="88" rx="12" fill="url(#grassGradV64)" stroke="#e8ffe3" stroke-width="2.2"/>
+      <rect x="16" y="12" width="88" height="72" rx="8" fill="none" stroke="#f1ffeb" stroke-width="1.8" opacity=".96"/>
+      <line x1="16" y1="48" x2="104" y2="48" stroke="#f1ffeb" stroke-width="1.8"/>
+      <circle cx="60" cy="48" r="9" fill="none" stroke="#f1ffeb" stroke-width="1.6"/>
+      <rect x="38" y="12" width="44" height="15" fill="none" stroke="#f1ffeb" stroke-width="1.5"/>
+      <rect x="48" y="12" width="24" height="7" fill="none" stroke="#f1ffeb" stroke-width="1.1"/>
+      <rect x="38" y="69" width="44" height="15" fill="none" stroke="#f1ffeb" stroke-width="1.5"/>
+      <rect x="48" y="77" width="24" height="7" fill="none" stroke="#f1ffeb" stroke-width="1.1"/>
+      ${circles}
+    </svg>
+  </div>`;
+}
+function tackleVisualHtmlV64(tackling){
+  const n = normalize(tackling);
+  let accent = '#7bd4ff', boot = '#ffffff', mark = '#7bd4ff', label = 'Entrada segura';
+  if(n.includes('normal')){ accent='#ffd56b'; boot='#fff2c9'; mark='#ffd56b'; label='Entrada normal'; }
+  if(n.includes('agres') || n.includes('dura') || n.includes('hard')){ accent='#ff857e'; boot='#ffe1df'; mark='#ff857e'; label='Entrada agressiva'; }
+  return `<div class="ref-icon" aria-label="${esc(label)}"><svg viewBox="0 0 64 64" role="img">
+    <circle cx="32" cy="32" r="28" fill="rgba(7,18,28,.22)" stroke="rgba(255,255,255,.16)" stroke-width="2"/>
+    <path d="M18 38c7-5 11-9 18-19 4 1 10 5 12 9-1 3-4 5-6 6l-3 8-7 2-4-4-6 2-4-4z" fill="${boot}" stroke="${accent}" stroke-width="2.4" stroke-linejoin="round"/>
+    <path d="M44 21l6-6" stroke="${mark}" stroke-width="3.2" stroke-linecap="round"/>
+    <path d="M50 21v-6" stroke="${mark}" stroke-width="3.2" stroke-linecap="round"/>
+  </svg></div>`;
+}
+function markingVisualHtmlV64(marking){
+  const n = normalize(marking);
+  const zone = n.includes('zona');
+  return `<div class="player-icon" aria-label="${esc(marking)}"><svg viewBox="0 0 64 64" role="img">
+    <circle cx="20" cy="18" r="7" fill="#9ad0ff"/><circle cx="44" cy="18" r="7" fill="#ffd56b"/>
+    <path d="M14 42c0-8 4-14 10-16 6 2 10 8 10 16" fill="none" stroke="#9ad0ff" stroke-width="4" stroke-linecap="round"/>
+    <path d="M38 42c0-8 4-14 10-16 6 2 10 8 10 16" fill="none" stroke="#ffd56b" stroke-width="4" stroke-linecap="round"/>
+    ${zone ? '<rect x="8" y="46" width="48" height="10" rx="5" fill="rgba(123,228,197,.18)" stroke="#7be4c5" stroke-width="2"/>' : '<path d="M24 30c8 0 16 2 20 8" fill="none" stroke="#7be4c5" stroke-width="3" stroke-dasharray="4 4" stroke-linecap="round"/>'}
+  </svg></div>`;
+}
+function offsideVisualHtmlV64(offside){
+  const yes = /(^|\b)(sim|yes)(\b|$)/i.test(String(offside||''));
+  return `<div class="player-icon" aria-label="${esc(offside)}"><svg viewBox="0 0 64 64" role="img">
+    <circle cx="24" cy="18" r="7" fill="#9ad0ff"/>
+    <path d="M18 42c0-8 4-14 10-16 6 2 10 8 10 16" fill="none" stroke="#9ad0ff" stroke-width="4" stroke-linecap="round"/>
+    <path d="M42 14v32" stroke="#ffffff" stroke-width="3" opacity=".85"/>
+    <path d="M42 14l10 6v16l-10 6z" fill="${yes?'#ff857e':'#7be4c5'}" stroke="#ffffff" stroke-width="2"/>
+  </svg></div>`;
+}
+function sectorArrowSvgV64(kind,text){
+  const x = normalize(text);
+  let color='#7bd4ff', path='M16 26 L16 8 M16 8 L9 15 M16 8 L23 15';
+  if(kind==='attack'){
+    if(x.includes('def')){ color='#ff9f79'; path='M16 6 L16 24 M16 24 L9 17 M16 24 L23 17'; }
+    else if(x.includes('meio') || x.includes('apoiar')){ color='#b9f7ab'; path='M5 16 L27 16 M5 16 L12 9 M5 16 L12 23 M27 16 L20 9 M27 16 L20 23'; }
+    else { color='#6fd0ff'; path='M16 26 L16 8 M16 8 L9 15 M16 8 L23 15'; }
+  } else if(kind==='mid'){
+    if(x.includes('def')){ color='#ffcf72'; path='M16 6 L16 24 M16 24 L9 17 M16 24 L23 17'; }
+    else if(x.includes('manter') || x.includes('posi')){ color='#b9f7ab'; path='M5 16 L27 16 M5 16 L12 9 M5 16 L12 23 M27 16 L20 9 M27 16 L20 23'; }
+    else { color='#6fd0ff'; path='M16 26 L16 8 M16 8 L9 15 M16 8 L23 15'; }
+  } else {
+    if(x.includes('atac')){ color='#6fd0ff'; path='M16 26 L16 8 M16 8 L9 15 M16 8 L23 15'; }
+    else if(x.includes('meio') || x.includes('apoiar')){ color='#b9f7ab'; path='M5 16 L27 16 M5 16 L12 9 M5 16 L12 23 M27 16 L20 9 M27 16 L20 23'; }
+    else { color='#ff9f79'; path='M16 6 L16 24 M16 24 L9 17 M16 24 L23 17'; }
+  }
+  return `<span class="sector-chip ${kind}"><svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="13.5" fill="rgba(6,17,28,.25)" stroke="rgba(255,255,255,.14)"/><path d="${path}" fill="none" stroke="${color}" stroke-width="3.3" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>`;
+}
+function tacticVisualHtmlV60(t){
+ if(!t)return '';
+ return `<div class="osm-tactic-ui">
+  <div class="osm-tactic-top">
+   <div class="osm-formation"><span>Formação</span><b>${esc(t.formation)}</b>${formationPitchHtmlV61(t.formation)}</div>
+   <div class="osm-plan"><span>Estilo de jogo</span><b>${esc(t.gamePlan)}</b>${planVisualHtmlV62(t.gamePlan)}</div>
+   <div class="osm-tackle"><span>Tipo de entrada</span><b>${esc(t.tackling)}</b>${tackleVisualHtmlV64(t.tackling)}</div>
+  </div>
+
+  <div class="osm-sector-wrap">
+   <div class="sector-pitch">
+    <div class="sector-line forwards"><span class="line-name">Avançados</span><strong>${sectorArrowSvgV64('attack',t.attackInstruction)}</strong><span class="line-goal">Ataque</span></div>
+    <div class="sector-line mids"><span class="line-name">Médios</span><strong>${sectorArrowSvgV64('mid',t.midfieldInstruction)}</strong><span class="line-goal">Meio</span></div>
+    <div class="sector-line defs"><span class="line-name">Defesas</span><strong>${sectorArrowSvgV64('def',t.defenceInstruction)}</strong><span class="line-goal">Defesa</span></div>
+   </div>
+   <div class="sector-values">
+    <div><small>Avançados</small><b>${esc(t.attackInstruction)}</b></div>
+    <div><small>Médios</small><b>${esc(t.midfieldInstruction)}</b></div>
+    <div><small>Defesas</small><b>${esc(t.defenceInstruction)}</b></div>
+   </div>
+  </div>
+
+  <div class="osm-sliders">
+   ${tacticSliderV60('Pressão',t.pressure)}
+   ${tacticSliderV60('Estilo',t.mentality)}
+   ${tacticSliderV60('Temporização',t.tempo)}
+  </div>
+
+  <div class="osm-bottom">
+   <div><span>Marcação</span><b>${esc(t.marking)}</b>${markingVisualHtmlV64(t.marking)}</div>
+   <div><span>Fazer fora-de-jogo</span><b>${esc(t.offside)}</b>${offsideVisualHtmlV64(t.offside)}</div>
+  </div>
+ </div>`;
+}

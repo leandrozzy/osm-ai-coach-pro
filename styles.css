@@ -496,3 +496,67 @@ body:before{
 }
 .logo-ring{border-width:2.4px !important}
 .logo-chip{border-radius:9px !important;padding:2px 6px !important;box-shadow:0 2px 6px rgba(0,0,0,.18)}
+
+
+/* ===== v6.4 fidelity refinements ===== */
+.osm-tactic-ui{gap:14px}
+.osm-tactic-top>div,.osm-bottom>div,.osm-sector-wrap,.osm-sliders{
+  border-radius:24px !important;
+}
+.osm-formation,.osm-plan,.osm-tackle{padding:18px 16px 16px !important}
+.osm-tactic-top span,.osm-bottom span,.sector-values small{
+  font-size:12px !important;
+  letter-spacing:.12em !important;
+}
+.osm-formation b,.osm-plan b,.osm-tackle b,.osm-bottom b{
+  font-size:19px !important;
+}
+.formation-pitch{margin-top:14px; display:flex; justify-content:center}
+.formation-pitch .formation-svg{width:100%; max-width:190px; height:auto}
+.player-dot{filter:drop-shadow(0 2px 2px rgba(0,0,0,.25))}
+.player-dot.gk{filter:drop-shadow(0 2px 2px rgba(0,0,0,.35))}
+.ref-icon,.player-icon{display:flex;justify-content:center;align-items:center;margin-top:10px}
+.ref-icon svg,.player-icon svg{width:44px;height:44px;display:block;filter:drop-shadow(0 4px 8px rgba(0,0,0,.22))}
+.osm-sector-wrap{grid-template-columns:minmax(0,1fr) 210px !important;gap:12px !important}
+.sector-pitch{
+  height:236px !important;
+  background:linear-gradient(180deg,#25ae3f,#0f7d25) !important;
+  border:2px solid rgba(231,255,233,.85) !important;
+  border-radius:22px !important;
+  position:relative;
+  overflow:hidden;
+}
+.sector-pitch:before{content:"";position:absolute;inset:14px;border:2px solid rgba(239,255,231,.78) !important;border-radius:14px !important}
+.sector-pitch:after{content:"";position:absolute;left:16px !important;right:16px !important;top:50%;border-top:2px solid rgba(239,255,231,.86) !important}
+.sector-line{
+  position:absolute;left:18px;right:18px;display:flex;align-items:center;justify-content:space-between;z-index:1;padding:0;
+}
+.sector-line.forwards{top:28px !important}
+.sector-line.mids{top:98px !important}
+.sector-line.defs{top:168px !important}
+.sector-line .line-name{
+  color:#ffffff;font-size:11px;font-weight:1000;letter-spacing:.1em;text-transform:uppercase;
+  background:rgba(6,17,28,.34);border:1px solid rgba(255,255,255,.18);border-radius:999px;padding:6px 10px;min-width:106px;text-align:center;
+}
+.sector-line .line-goal{
+  color:#eefcff;font-size:12px;font-weight:800;opacity:.95;background:rgba(6,17,28,.28);border:1px solid rgba(255,255,255,.14);border-radius:12px;padding:5px 8px;
+}
+.sector-values{gap:10px !important}
+.sector-values div{padding:13px 14px !important;border-radius:18px !important}
+.sector-values b{font-size:17px !important;line-height:1.2}
+.sector-chip{width:62px !important;height:62px !important;border-radius:999px !important;display:flex !important;align-items:center;justify-content:center}
+.sector-chip svg{width:40px !important;height:40px !important}
+.tactic-slider .slider-top strong{font-size:17px}
+.tactic-slider .slider-top span{font-size:28px}
+.timeline-item,.today-event,.schedule-card,.info-card,.summary-card,.result-card,.slot-card,.hero-card,.card{position:relative;overflow:hidden}
+.timeline-item:before,.today-event:before,.schedule-card:before,.info-card:before,.summary-card:before,.result-card:before,.slot-card:before,.hero-card:before,.card:before{
+  content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,.04),transparent 24%);pointer-events:none;
+}
+@media (max-width: 760px){
+  .osm-sector-wrap{grid-template-columns:1fr !important}
+  .sector-values{grid-template-columns:1fr !important}
+  .sector-pitch{height:214px !important}
+  .sector-line.forwards{top:24px !important}
+  .sector-line.mids{top:88px !important}
+  .sector-line.defs{top:152px !important}
+}
