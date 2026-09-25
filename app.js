@@ -1,6 +1,6 @@
 'use strict';
 
-const V2_VERSION = '2.4.0';
+const V2_VERSION = '2.4.1';
 const STATE_KEY = 'osm_ai_coach_pro_v2_state';
 const SETTINGS_KEY = 'osm_ai_coach_pro_v2_settings';
 const API_KEY_STORAGE = 'osm_ai_coach_pro_gemini_key';
@@ -522,6 +522,7 @@ function tacticHtml(s){
   const rows=[['Formação',t.formation],['Estilo de jogo',t.gamePlan],['Pressão',t.pressure],['Estilo / Mentalidade',t.mentality],['Temporização / Ritmo',t.tempo],['Marcação',t.marking],['Impedimento',t.offside],['Desarme',t.tackling],['Avançadas – Ataque',t.attackInstruction],['Avançadas – Meio',t.midfieldInstruction],['Avançadas – Defesa',t.defenceInstruction]];
   return `<div class="card" style="margin-top:12px"><div class="tactic-head"><div><span class="eyebrow">TÁTICA FINAL</span><h3>${esc(t.formation)} · ${esc(t.gamePlan)}</h3></div><span class="status ok">Recomendação</span></div>
   <table class="tactic-table">${rows.map(([a,b])=>`<tr><td>${esc(a)}</td><td>${esc(b)}</td></tr>`).join('')}</table>
+  <div class="tactic-engine-strip"><span>Motor</span><b>${esc(t.engine||'V2')}</b><span>Candidatos comparados</span><b>${(s.tacticCandidates||[]).length||1}</b><span>Amostra contextual</span><b>${esc(t.contextSample??0)}</b></div>
   <div class="confidence-bar"><div class="small muted">Confiança da recomendação: ${conf}%</div><div class="confidence-track"><span style="width:${conf}%"></span></div></div>
   <div class="reason-box"><b>Resumo da decisão</b><br>${esc(t.reason||'Tática validada pelo motor V2.')}</div>
   <div class="actions"><button class="btn" onclick="generateTactic(${s.slotNumber})">Recalcular</button><button class="btn ghost" onclick="copyTactic(${s.slotNumber})">Copiar configuração</button><button class="btn ghost" onclick="whyTactic(${s.slotNumber})">Por que esta tática?</button><button class="btn ghost" onclick="resultModal(${s.slotNumber})">Registrar resultado</button></div></div>`;
@@ -1436,6 +1437,146 @@ window.saveInfoEdit=function(){
   toast('Informações atualizadas');
 };
 
+
+function outcomeLabel(r){
+  if(Number(r.gf)>Number(r.ga))return 'Vitória';
+  if(Number(r.gf)===Number(r.ga))return 'Empate';
+  return 'Derrota';
+}
+function outcomeClass(r){
+  if(Number(r.gf)>Number(r.ga))return 'win';
+  if(Number(r.gf)===Number(r.ga))return 'draw';
+  return 'loss';
+}
+function contextualHistoryBeforeResult(slot,result){
+  const rows=state.slots.flatMap(s=>(s.results||[]).filter(r=>r!==result));
+  return rows.filter(r=>
+    r.context?.competitionType===result.context?.competitionType &&
+    r.context?.strengthBucket===result.context?.strengthBucket &&
+    r.context?.venue===result.context?.venue &&
+    (!result.context?.oppFormation || r.context?.oppFormation===result.context?.oppFormation) &&
+    (!result.tactic?.formation || r.tactic?.formation===result.tactic?.formation)
+  );
+}
+function postMatchReview(slot,result){
+  const before=contextualHistoryBeforeResult(slot,result);
+  const sameTactic=state.slots.flatMap(s=>s.results||[]).filter(r=>r!==result && r.tactic?.formation===result.tactic?.formation && r.tactic?.gamePlan===result.tactic?.gamePlan);
+  const points=arr=>arr.reduce((p,r)=>p+(r.gf>r.ga?3:r.gf===r.ga?1:0),0);
+  const ppgBefore=before.length?points(before)/before.length:null;
+  const currentPoint=result.gf>result.ga?3:result.gf===result.ga?1:0;
+  const scoreDiff=Number(result.gf)-Number(result.ga);
+  const notes=[];
+
+  if(result.stats){
+    const myShots=Number(result.stats.myShots),oppShots=Number(result.stats.oppShots);
+    const myPoss=Number(result.stats.myPossession),oppPoss=Number(result.stats.oppPossession);
+    const myRed=Number(result.stats.myRedCards||0),oppRed=Number(result.stats.oppRedCards||0);
+
+    if(Number.isFinite(myShots)&&Number.isFinite(oppShots)){
+      if(oppShots>=myShots+5)notes.push('O rival finalizou bem mais; a proteção defensiva/pressão deve ser revista.');
+      else if(myShots>=oppShots+5 && result.gf<=result.ga)notes.push('O time criou mais finalizações, mas converteu mal; não descarte a estrutura tática apenas pelo placar.');
+    }
+    if(Number.isFinite(myPoss)&&Number.isFinite(oppPoss)){
+      if(myPoss>=58 && result.gf<=result.ga)notes.push('Houve posse alta sem resultado; o plano pode estar circulando a bola sem criar chances suficientes.');
+      if(oppPoss>=58 && result.gf>result.ga)notes.push('Mesmo com menos posse, o plano foi eficiente; o contra-ataque/transição merece ser preservado em contexto semelhante.');
+    }
+    if(myRed>0)notes.push('Houve cartão vermelho para o seu time; a derrota/queda de desempenho não deve ser atribuída integralmente à tática.');
+    if(oppRed>0)notes.push('O rival teve cartão vermelho; a vitória não deve aumentar demais a confiança da tática.');
+  }
+
+  if(!notes.length){
+    if(scoreDiff>=2)notes.push('A tática produziu um resultado forte neste contexto.');
+    else if(scoreDiff===1)notes.push('A tática venceu, mas por margem curta; mantenha cautela antes de tratá-la como padrão.');
+    else if(scoreDiff===0)notes.push('O empate adiciona evidência neutra; o contexto precisa de mais jogos antes de alterar o padrão.');
+    else if(scoreDiff===-1)notes.push('Derrota por margem curta; revise contexto e estatísticas antes de abandonar a tática.');
+    else notes.push('Derrota por margem ampla; este contexto deve reduzir a prioridade desta configuração em jogos semelhantes.');
+  }
+
+  let confidenceImpact='Neutro';
+  let confidenceDelta=0;
+  if(currentPoint===3){confidenceDelta=before.length>=2?4:2;confidenceImpact=`+${confidenceDelta}%`}
+  else if(currentPoint===1){confidenceDelta=0;confidenceImpact='0%'}
+  else {confidenceDelta=before.length>=2?-5:-3;confidenceImpact=`${confidenceDelta}%`}
+
+  if(Number(result.stats?.myRedCards||0)>0 && confidenceDelta<0){confidenceDelta=Math.ceil(confidenceDelta/2);confidenceImpact=`${confidenceDelta}%`}
+  if(Number(result.stats?.oppRedCards||0)>0 && confidenceDelta>0){confidenceDelta=Math.floor(confidenceDelta/2);confidenceImpact=`+${confidenceDelta}%`}
+
+  const nextAction =
+    currentPoint===3
+      ? 'Manter esta tática como candidata forte em contexto semelhante, mas continuar comparando com alternativas.'
+      : currentPoint===1
+        ? 'Não promover nem descartar a tática; usar o próximo jogo semelhante para desempatar a evidência.'
+        : 'Reduzir a prioridade desta combinação em contexto semelhante e testar outro candidato do Motor V3.';
+
+  return {
+    outcome:outcomeLabel(result),
+    outcomeClass:outcomeClass(result),
+    score:result.score,
+    confidenceImpact,
+    contextGamesBefore:before.length,
+    previousPpg:ppgBefore,
+    sameTacticGames:sameTactic.length,
+    notes,
+    nextAction,
+    context:{
+      competition:result.context?.competitionType||'NI',
+      strength:result.context?.strengthBucket||'NI',
+      venue:result.context?.venue||'NI',
+      oppFormation:result.context?.oppFormation||'NI',
+      myFormation:result.tactic?.formation||'NI',
+      plan:result.tactic?.gamePlan||'NI'
+    }
+  };
+}
+function postMatchHtml(slot,result){
+  const r=postMatchReview(slot,result);
+  return `<div class="postmatch">
+    <div class="postmatch-hero ${r.outcomeClass}">
+      <div><span class="eyebrow">PÓS-JOGO IA</span><h2>${esc(r.outcome)} · ${esc(r.score)}</h2></div>
+      <div class="impact"><span>Impacto na confiança</span><b>${esc(r.confidenceImpact)}</b></div>
+    </div>
+
+    <div class="postmatch-grid">
+      <div class="card">
+        <h3>O que a IA aprendeu</h3>
+        <div class="insight-list">${r.notes.map(x=>`<div>• ${esc(x)}</div>`).join('')}</div>
+      </div>
+      <div class="card">
+        <h3>Contexto registrado</h3>
+        <div class="context-grid">
+          ${ctx('Competição',r.context.competition)}
+          ${ctx('Força relativa',r.context.strength)}
+          ${ctx('Local',r.context.venue)}
+          ${ctx('Rival',r.context.oppFormation)}
+          ${ctx('Minha formação',r.context.myFormation)}
+          ${ctx('Plano',r.context.plan)}
+        </div>
+      </div>
+    </div>
+
+    <div class="card next-decision">
+      <span class="eyebrow">PRÓXIMA DECISÃO</span>
+      <h3>${esc(r.nextAction)}</h3>
+      <p class="small muted">Antes deste resultado havia ${r.contextGamesBefore} jogo(s) realmente comparável(is). ${r.previousPpg!==null?`Média anterior: ${r.previousPpg.toFixed(2)} ponto(s)/jogo.`:'Ainda não havia amostra suficiente.'}</p>
+    </div>
+
+    <div class="actions">
+      <button class="btn" onclick="closeModal();showView('learning')">Ver aprendizado atualizado</button>
+      <button class="btn ghost" onclick="closeModal();showView('history')">Ver histórico</button>
+      <button class="btn ghost" onclick="closeModal();showView('dashboard')">Voltar para Hoje</button>
+    </div>
+  </div>`;
+}
+function showPostMatch(slotNumber,resultIndex=null){
+  const s=state.slots[slotNumber-1];
+  if(!s)return;
+  const rows=s.results||[];
+  const r=resultIndex===null?rows.at(-1):rows[resultIndex];
+  if(!r)return;
+  openModal(postMatchHtml(s,r));
+}
+window.showPostMatch=showPostMatch;
+
 function renderLearning(){
   const rows=state.slots.flatMap(s=>(Array.isArray(s.results)?s.results:[]).map(r=>({...r,slotNumber:s.slotNumber,competitionType:r.context?.competitionType||s.competitionType})));
   const w=rows.filter(r=>r.gf>r.ga).length,d=rows.filter(r=>r.gf===r.ga).length,l=rows.filter(r=>r.gf<r.ga).length;
@@ -1459,7 +1600,7 @@ function renderLearning(){
 }
 function renderHistory(){
   const s=selectedSlot(),rows=s?.results||[];let w=0,d=0,l=0,gf=0,ga=0;for(const r of rows){gf+=Number(r.gf)||0;ga+=Number(r.ga)||0;if(r.gf>r.ga)w++;else if(r.gf===r.ga)d++;else l++}
-  $('historyContent').innerHTML=`<div class="card"><div class="kpis"><div class="kpi"><span>J</span><b>${rows.length}</b></div><div class="kpi"><span>V/E/D</span><b>${w}/${d}/${l}</b></div><div class="kpi"><span>Gols</span><b>${gf}-${ga}</b></div><div class="kpi"><span>Slot</span><b>${state.selectedSlot}</b></div></div></div>${rows.slice().reverse().map(r=>`<div class="card" style="margin-top:10px"><div class="market-head"><div><b>${esc(s.teamName)} × ${esc(r.opponent)}</b><div class="small muted">${fmtDate(r.createdAt)} · ${esc(r.context?.venue)}</div></div><span class="status">${esc(r.score)}</span></div><p class="small">Tática: <b>${esc(r.tactic?.formation)} · ${esc(r.tactic?.gamePlan)}</b></p><p class="small muted">Rival: ${esc(r.context?.oppFormation)} · força ${esc(r.context?.myOverall)} × ${esc(r.context?.oppOverall)}</p><p class="result-insight">${esc(r.insight||resultInsight(r))}</p></div>`).join('')||'<div class="card" style="margin-top:10px"><p class="muted">Nenhum resultado registrado.</p></div>'}`;
+  $('historyContent').innerHTML=`<div class="card"><div class="kpis"><div class="kpi"><span>J</span><b>${rows.length}</b></div><div class="kpi"><span>V/E/D</span><b>${w}/${d}/${l}</b></div><div class="kpi"><span>Gols</span><b>${gf}-${ga}</b></div><div class="kpi"><span>Slot</span><b>${state.selectedSlot}</b></div></div></div>${rows.slice().reverse().map(r=>`<div class="card" style="margin-top:10px"><div class="market-head"><div><b>${esc(s.teamName)} × ${esc(r.opponent)}</b><div class="small muted">${fmtDate(r.createdAt)} · ${esc(r.context?.venue)}</div></div><span class="status">${esc(r.score)}</span></div><p class="small">Tática: <b>${esc(r.tactic?.formation)} · ${esc(r.tactic?.gamePlan)}</b></p><p class="small muted">Rival: ${esc(r.context?.oppFormation)} · força ${esc(r.context?.myOverall)} × ${esc(r.context?.oppOverall)}</p><p class="result-insight">${esc(r.insight||resultInsight(r))}</p><div class="actions"><button class="btn ghost tiny" onclick="showPostMatch(${s.slotNumber},${rows.indexOf(r)})">Abrir Pós-jogo IA</button></div></div>`).join('')||'<div class="card" style="margin-top:10px"><p class="muted">Nenhum resultado registrado.</p></div>'}`;
 }
 window.resultModal=function(n){
   const s=state.slots[n-1];if(!s.tactic){toast('Gere uma tática antes de registrar o resultado');return}
@@ -1469,7 +1610,14 @@ window.saveResult=function(n){
   const s=state.slots[n-1],gf=Number($('rGF').value),ga=Number($('rGA').value);if(!Number.isFinite(gf)||!Number.isFinite(ga)){toast('Informe o placar');return}
   const e={createdAt:nowIso(),opponent:$('rOpp').value.trim()||s.opponent.teamName,gf,ga,score:`${gf}-${ga}`,note:$('rNote').value.trim()||null,tactic:clone(s.tactic),context:{competitionType:s.competitionType,myOverall:s.myTeam.overall,oppOverall:s.opponent.overall,oppFormation:s.opponent.formation,oppStyle:s.opponent.style,venue:s.match.venue,referee:s.match.refereeColor,strengthBucket:strengthBucket(s)}};
   e.insight=resultInsight(e);
-  s.results.push(e);s.tactic=null;if(Number.isFinite(Number(s.round)))s.round=Number(s.round)+1;saveState();closeModal();toast('Resultado salvo; aprendizado atualizado');
+  s.results.push(e);
+  const resultIndex=s.results.length-1;
+  s.tactic=null;
+  if(Number.isFinite(Number(s.round)))s.round=Number(s.round)+1;
+  saveState();
+  closeModal();
+  toast('Resultado salvo; aprendizado atualizado');
+  setTimeout(()=>showPostMatch(n,resultIndex),120);
 };
 
 
@@ -1967,6 +2115,7 @@ function v21ApplyResult(r){
   s.lastResultInsight=s.results[s.results.length-1].insight;
   s.tactic=null;
   if(Number.isFinite(Number(s.round)))s.round=Number(s.round)+1;
+  return s.results.length-1;
 }
 function v21RenderEvidence(frames){
   $('mediaPreview').innerHTML=frames.slice(0,12).map(f=>`<img src="${f.dataUrl}" alt="Quadro ${Math.round(f.time||0)}s">`).join('');
@@ -2081,13 +2230,14 @@ async function v21Analyze(files){
   evidence=v21SelectVisualEvidence(frames,6);
   setProgress(58,'Lendo resultado com o motor da V1…');
   result=await v21AnalyzePackage(ocr,evidence,'result');
-  v21ApplyResult(result);
+  const resultIndex=v21ApplyResult(result);
   saveState();
   renderHistory();
   $('analysisContent').innerHTML=`<div class="card" style="margin-top:12px"><h3>Resultado registrado</h3><p class="muted small">${esc(result.score||`${result.gf}-${result.ga}`)} salvo no histórico e aprendizado.</p></div>`;
   setProgress(100,'Resultado registrado');
   setAnalysisRun(selectedSlot(),'result','success',`Resultado ${result.score||`${result.gf}-${result.ga}`} registrado.`);
   job('Resultado registrado e aprendizado atualizado.','done');
+  setTimeout(()=>showPostMatch(n,resultIndex),180);
 }
 
 function setAnalysisMode(mode){

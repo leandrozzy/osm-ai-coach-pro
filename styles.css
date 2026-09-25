@@ -201,3 +201,25 @@ body{padding-bottom:max(28px,env(safe-area-inset-bottom))}
   .milestone-grid{grid-template-columns:1fr}
   .event-card .event-row,.change-list>div,.context-learning>div{grid-template-columns:1fr}
 }
+
+/* V2.4.1 - Pós-jogo IA e Motor V3 visível */
+.postmatch{display:grid;gap:12px}
+.postmatch-hero{display:flex;justify-content:space-between;gap:14px;align-items:center;padding:15px;border-radius:14px;border:1px solid #27455f;background:#0b1c2b}
+.postmatch-hero.win{border-color:#28745f;background:#0b2924}
+.postmatch-hero.draw{border-color:#826728;background:#2a2412}
+.postmatch-hero.loss{border-color:#7d3441;background:#31171d}
+.postmatch-hero h2{margin:4px 0 0}
+.postmatch-hero .impact{text-align:right}
+.postmatch-hero .impact span{display:block;font-size:9px;color:var(--muted);text-transform:uppercase}
+.postmatch-hero .impact b{display:block;font-size:24px;margin-top:3px}
+.postmatch-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.insight-list{display:grid;gap:8px;font-size:12px;line-height:1.45}
+.insight-list>div{padding:8px 9px;border-radius:9px;background:#091827;border:1px solid #193650}
+.next-decision h3{margin:6px 0 3px;line-height:1.4}
+.tactic-engine-strip{display:grid;grid-template-columns:1fr auto;gap:5px 12px;padding:10px;border:1px solid #1d3b56;border-radius:10px;background:#091827;margin:10px 0}
+.tactic-engine-strip span{font-size:9px;color:var(--muted);text-transform:uppercase}
+.tactic-engine-strip b{text-align:right;font-size:11px}
+@media(max-width:700px){
+  .postmatch-grid{grid-template-columns:1fr}
+  .postmatch-hero{align-items:flex-start}
+}
