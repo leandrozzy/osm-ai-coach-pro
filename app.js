@@ -1,6 +1,6 @@
 'use strict';
 
-const V2_VERSION = '2.3.3';
+const V2_VERSION = '2.3.4';
 const STATE_KEY = 'osm_ai_coach_pro_v2_state';
 const SETTINGS_KEY = 'osm_ai_coach_pro_v2_settings';
 const API_KEY_STORAGE = 'osm_ai_coach_pro_gemini_key';
@@ -1228,7 +1228,7 @@ function calendarTableHtml(rows){
       <td>${esc(x.venue)}</td>
       <td>${esc(x.opponent)}</td>
       <td>${esc(x.dateTime?fmtDate(x.dateTime):`${x.dateText||'NI'} ${x.timeText||''}`)}</td>
-      <td>${x.placeholder?'Aguardando definição':x.played?`<span class="result-badge ${String(x.outcome||'').toUpperCase()==='V'?'win':String(x.outcome||'').toUpperCase()==='E'?'draw':'loss'}">${esc(calendarOutcomeLabel(x))}</span>${x.result?` · ${esc(x.result)}`:''}`:x.skipped?'Ignorado':x.conditional?'Condicional':'Futuro'}</td>
+      <td>${x.played?`<span class="result-badge ${String(x.outcome||'').toUpperCase()==='V'?'win':String(x.outcome||'').toUpperCase()==='E'?'draw':'loss'}">${esc(calendarOutcomeLabel(x))}</span>${x.result?` · ${esc(x.result)}`:''}`:x.skipped?'Ignorado':x.conditional?'Condicional':'Futuro'}</td>
     </tr>`).join('')}</tbody>
   </table></div>`;
 }
@@ -1430,100 +1430,561 @@ async function v21ImageToFrame(file){
 }
 async function v21RunLocalOcr(frames){
   if(!window.Tesseract)throw new Error('OCR local não carregou. Recarregue a página e tente novamente.');
-  const results=[];
-  let worker=null;
-
+  const results=[];let worker=null;
   try{
-    try{
-      worker=await Tesseract.createWorker('por+eng',1,{
-        logger:m=>{
-          if(m.status==='recognizing text'&&m.progress){
-            setProgress(20+Math.round(m.progress*28),`OCR local ${Math.round(m.progress*100)}%…`);
-          }
-        }
-      });
-    }catch{
-      worker=await Tesseract.createWorker('eng',1,{
-        logger:m=>{
-          if(m.status==='recognizing text'&&m.progress){
-            setProgress(20+Math.round(m.progress*28),`OCR local ${Math.round(m.progress*100)}%…`);
-          }
-        }
-      });
-    }
-
+    worker=await Tesseract.createWorker('por+eng',1,{logger:m=>{
+      if(m.status==='recognizing text'&&m.progress)setProgress(20+Math.round(m.progress*28),`OCR local ${Math.round(m.progress*100)}%…`);
+    }});
+  }catch{
+    worker=await Tesseract.createWorker('eng',1,{logger:m=>{
+      if(m.status==='recognizing text'&&m.progress)setProgress(20+Math.round(m.progress*28),`OCR local ${Math.round(m.progress*100)}%…`);
+    }});
+  }
+  try{
     for(let i=0;i<frames.length;i++){
-      setProgress(
-        22+Math.round((i/Math.max(1,frames.length))*26),
-        `OCR quadro ${i+1}/${frames.length}…`
-      );
-
+      setProgress(22+Math.round((i/Math.max(1,frames.length))*26),`OCR quadro ${i+1}/${frames.length}…`);
       const {data}=await worker.recognize(frames[i].dataUrl);
-      const text=String(data?.text||'')
-        .replace(/[ \t]+/g,' ')
-        .replace(/\n{3,}/g,'\n\n')
-        .trim();
+      const text=String(data?.text||'').replace(/[ \t]+/g,' ').replace(/\n{3,}/g,'\n\n').trim();
+      if(text.length>5)results.push({frame:i+1,time:Math.round(frames[i].time||0),text});
+    }
+  }finally{if(worker)await worker.terminate()}
+  return {mode:analysisMode,frames:results,joined:results.map(x=>`[Quadro ${x.frame} ~${x.time}s]\n${x.text}`).join('\n\n')};
+}
+function v21SelectVisualEvidence(frames,n=3){
+  if(!frames.length)return [];
+  const ranked=[...frames].sort((a,b)=>(b.score||0)-(a.score||0)),out=[];
+  for(const f of ranked){
+    if(out.length>=n)break;
+    if(!out.some(x=>Math.abs((x.time||0)-(f.time||0))<1.2))out.push(f);
+  }
+  return out;
+}
+function v21BuildFrameClassification(text,frame,slot){
+  const t=v21NormText(text),myName=v21NormText(slot?.teamName),oppName=v21NormText(slot?.opponent?.teamName),nick=v21NormText(settings.userNick||''),l=frame?.layout||{};
+  const score={match_overview:0,my_squad:0,opponent_squad:0,analyst_summary:0,analyst_marking:0,analyst_formation:0};
+  if(t.includes('vs'))score.match_overview+=5;
+  if(t.includes('arbitro'))score.match_overview+=6;
+  if(t.includes('jornada'))score.match_overview+=4;
+  if((l.dark||0)>.38)score.match_overview+=2;
+  const squadBase=(l.bottomWhite||0)>.32?5:0;
+  if(squadBase){score.my_squad+=squadBase;score.opponent_squad+=squadBase}
+  if(t.includes('posicao')||t.includes('objetivo')||t.includes('jogador')||t.includes('idade')||t.includes('valor')){score.my_squad+=2;score.opponent_squad+=2}
+  if(nick&&t.includes(nick)){score.my_squad+=12;score.opponent_squad-=8}
+  if(myName&&t.includes(myName)){score.my_squad+=8;score.opponent_squad-=5}
+  if(oppName&&t.includes(oppName)){score.opponent_squad+=10;score.my_squad-=4}
+  const analystLayout=(l.leftWhite||0)>.34?5:0;
+  if(analystLayout){score.analyst_summary+=5;score.analyst_marking+=2;score.analyst_formation+=2}
+  if(t.includes('pelo que pude ver')||t.includes('tenho a certeza')||t.includes('nivel do estadio'))score.analyst_summary+=10;
+  if(t.includes('marcacao')||t.includes('fora-de-jogo')||t.includes('fora de jogo')||t.includes('homem-a-homem')||t.includes('a zona'))score.analyst_marking+=10;
+  if((l.rightBlue||0)>.1)score.analyst_marking+=3;
+  if(t.includes('formacao:')||t.includes('formação:')||t.includes('suplentes')||t.includes('tatica'))score.analyst_formation+=10;
+  if((l.rightGreen||0)>.12)score.analyst_formation+=4;
+  return score;
+}
+function v21SelectRequiredTacticFrames(frames,ocr){
+  const slot=selectedSlot();
+  const enriched=(ocr.frames||[]).map(o=>{
+    const frame=frames[(o.frame||1)-1];
+    return {...o,frame,scores:v21BuildFrameClassification(o.text,frame,slot)};
+  }).filter(x=>x.frame);
 
-      if(text.length>5){
-        results.push({
-          frame:i+1,
-          time:Math.round(frames[i].time||0),
-          text
-        });
-      }
-    }
-  }finally{
-    if(worker){
-      try{await worker.terminate()}catch{}
-    }
+  const pick=(key,min=4,exclude=[])=>{
+    const b=[...enriched]
+      .filter(x=>!exclude.includes(x.frame))
+      .sort((a,b)=>(b.scores[key]||0)-(a.scores[key]||0))[0];
+    return b&&(b.scores[key]||0)>=min?b:null;
+  };
+
+  const match=pick('match_overview',4);
+  const mine=pick('my_squad',4);
+  const opp=pick('opponent_squad',4,mine?[mine.frame]:[]);
+
+  // Analista: thresholds mais tolerantes porque o OCR pode não ler os rótulos,
+  // mas o layout visual ainda mostra claramente as telas.
+  let summary=pick('analyst_summary',3);
+  let mark=pick('analyst_marking',3);
+  let form=pick('analyst_formation',3);
+
+  // Fallback visual: pega quadros com layout típico do Data Analyst
+  // quando a classificação textual falha.
+  const used=new Set([match?.frame,mine?.frame,opp?.frame,summary?.frame,mark?.frame,form?.frame].filter(Boolean));
+  const analystCandidates=[...enriched]
+    .filter(x=>!used.has(x.frame))
+    .map(x=>{
+      const l=x.frame?.layout||{};
+      const visual=(l.leftWhite||0)*12+(l.rightBlue||0)*9+(l.rightGreen||0)*9;
+      const textScore=Math.max(x.scores.analyst_summary||0,x.scores.analyst_marking||0,x.scores.analyst_formation||0);
+      return {...x,_analystScore:visual+textScore};
+    })
+    .sort((a,b)=>b._analystScore-a._analystScore);
+
+  const takeFallback=()=>{
+    const x=analystCandidates.shift();
+    if(x){used.add(x.frame);return x}
+    return null;
+  };
+
+  if(!summary) summary=takeFallback();
+  if(!mark) mark=takeFallback();
+  if(!form) form=takeFallback();
+
+  const defs=[
+    ['match_overview','Tela da partida',match],
+    ['my_squad','Meu elenco',mine],
+    ['opponent_squad','Elenco rival',opp],
+    ['analyst_summary','Analista resumo',summary],
+    ['analyst_marking','Analista marcação',mark],
+    ['analyst_formation','Analista formação',form]
+  ];
+
+  const result=defs.map(([key,label,b])=>b
+    ?{type:key,label,frame:b.frame,text:b.text,score:b.scores?.[key]??b._analystScore??0}
+    :{type:key,label,frame:null,text:null,score:0}
+  );
+
+  ocr.required=result.reduce((a,x)=>{a[x.type]=x.text||null;return a},{});
+  ocr.missingRequired=result.filter(x=>!x.frame).map(x=>x.label);
+  return result;
+}
+function v21Prompt(ocr,mode){
+  const s=selectedSlot();
+  const base=`Você é um extrator especialista no OSM 26 Android.
+Meu usuário é "${settings.userNick||'leandrozzy'}". Quando esse nick aparecer, aquele lado é SEMPRE meu time.
+Nunca inverta minha força com a força rival. Nunca invente valor ausente. Use null quando não souber.
+OCR LOCAL:
+${ocr.joined}
+
+DADOS SALVOS DO SLOT (só apoio, não contradiga o vídeo):
+${JSON.stringify({teamName:s.teamName,myTeam:s.myTeam,opponent:s.opponent,match:s.match,competitionType:s.competitionType,round:s.round})}
+`;
+
+  if(mode==='tactic')return base+`
+O app separou as telas obrigatórias. Algumas podem ter classificação local incerta; confirme visualmente nas imagens enviadas antes de concluir que faltam:
+${JSON.stringify(ocr.required||{},null,2)}
+Ausentes:
+${JSON.stringify(ocr.missingRequired||[])}
+
+Extraia meu time, rival, casa/fora, árbitro, força geral, GOL/DEF/MEI/ATA, estádio, humano/CPU, bônus de sequência de login,
+ATENÇÃO AO BÔNUS DO RIVAL: na tela inicial/comparação ele pode aparecer por poucos segundos depois da força do time, normalmente como 1%, 2% ou 3%. Se estiver visível em qualquer quadro, grave obrigatoriamente em opponent.loginBonus. Não confunda com meu bônus.
+
+campo de treinamento, treino secreto, formação rival, plano rival, marcação rival e impedimento.
+Humano=true somente se houver nick/manager visível abaixo do adversário.
+Se treino secreto impedir análise rival, mantenha os campos secretos null.
+
+Gere também UMA tática final completa.
+Árbitro vermelho/laranja: desarme Cuidadoso.
+Retorne somente:
+{"capture":{"teamName":null,"competitionName":null,"competitionType":null,"round":null,"totalRounds":null,
+"myTeam":{"overall":null,"goalkeeper":null,"defence":null,"midfield":null,"attack":null,"squadValue":null,"playerCount":null,"stadium":null,"loginBonus":null,"secretTraining":null,"trainingCamp":null},
+"opponent":{"teamName":null,"human":null,"manager":null,"overall":null,"goalkeeper":null,"defence":null,"midfield":null,"attack":null,"squadValue":null,"playerCount":null,"stadium":null,"loginBonus":null,"secretTraining":null,"trainingCamp":null,"formation":null,"style":null,"marking":null,"offside":null},
+"match":{"venue":null,"refereeName":null,"refereeColor":null,"exactDateTimeText":null,"countdownText":null},
+"recommendedTactic":{"formation":"","gamePlan":"","pressure":0,"mentality":0,"tempo":0,"marking":"À zona","offside":"Não","tackling":"Normal","attackInstruction":"","midfieldInstruction":"","defenceInstruction":"","reason":""}}}`;
+
+  if(mode==='market')return base+`
+Analise SOMENTE MEU ELENCO mostrado no vídeo.
+Extraia TODOS os jogadores visíveis ao longo de TODA a rolagem do vídeo.
+Não pare nos primeiros jogadores. Compare todos os quadros e consolide nomes repetidos em uma única entrada.
+Se um jogador aparece parcialmente em um quadro e completo em outro, use o quadro mais completo.
+Antes de responder, confira se percorreu todas as posições do elenco: atacantes, meias, defensores e goleiros.
+Leia EXATAMENTE a coluna Pos. Códigos do OSM:
+GR = goleiro; DD/DC/DE = defensores; MDC/MC/MCO/MD/ME = meias; PL/ED/EE = atacantes.
+Camisa laranja = em treinamento, NÃO venda.
+Ícones vermelhos de lesão, suspensão ou condição NÃO significam venda.
+Venda somente quando houver claramente o ícone de SETAS de transferência na mesma linha do jogador.
+Para forSale=true, preencha saleEvidence="transfer_arrows". Sem essa evidência, forSale=false.
+Não invente jogador.
+Retorne somente:
+{"roster":[{"name":"","position":null,"rating":null,"value":null,"age":null,"training":false,"forSale":false,"saleEvidence":null}],
+"myTeam":{"squadValue":null,"playerCount":null}}`;
+
+  if(mode==='calendar')return base+`
+Analise SOMENTE o calendário.
+Casinha à esquerda = Casa; sem casinha = Fora.
+Taça/troféu = Copa/Taça.
+V/D/E ou placar = partida já jogada.
+Interprete obrigatoriamente: V = Vitória, E = Empate, D = Derrota.
+O círculo com V/E/D é a FONTE DE VERDADE e tem prioridade sobre qualquer inferência pelo placar.
+Nunca inverta o resultado por casa/fora: o placar do calendário está na perspectiva do meu time.
+Retorne outcome exatamente como V, E ou D quando aparecer.
+IMPORTANTE: card de Copa/Taça vazio, sem adversário definido, sem placar e sem V/E/D, NÃO é partida jogada.
+Nesse caso use played=false, outcome=null, result=null e conditional=true.
+Um card vazio de Copa nunca pode virar Vitória/Empate/Derrota.
+Extraia futuras e já jogadas.
+Retorne somente:
+{"matches":[{"round":null,"opponent":null,"competitionType":"league|cup|null","venue":"Casa|Fora|null","dateText":null,"timeText":null,"dateTime":null,"result":null,"outcome":"V|D|E|null","played":false,"conditional":false}]}`;
+
+  return base+`
+Analise SOMENTE o resultado final.
+Extraia placar, formação final dos dois times, remates, posse, cantos, faltas, amarelos e vermelhos de cada time.
+Não invente.
+Retorne somente:
+{"teamName":null,"opponent":null,"gf":null,"ga":null,"score":null,"myFormation":null,"oppFormation":null,
+"stats":{"myShots":null,"oppShots":null,"myPossession":null,"oppPossession":null,"myCorners":null,"oppCorners":null,"myFouls":null,"oppFouls":null,"myYellowCards":null,"oppYellowCards":null,"myRedCards":null,"oppRedCards":null},
+"events":[]}`;
+}
+async function v21AnalyzePackage(ocr,evidence,mode){
+  const parts=[{text:v21Prompt(ocr,mode)}];
+  for(const f of evidence)parts.push({inlineData:{mimeType:f.mimeType,data:f.base64}});
+  return geminiJson(parts,.03,mode==='tactic'?8500:7000);
+}
+function v21MergeNonNull(old,nw){
+  const out={...(old||{})};
+  for(const [k,v] of Object.entries(nw||{}))if(v!==null&&v!==undefined&&v!=='')out[k]=v;
+  return out;
+}
+function v21ApplyCapture(c){
+  const s=selectedSlot(),confidence=.88;
+  s.status='active';
+  for(const k of ['teamName','competitionName','competitionType','round','totalRounds'])if(c?.[k]!==null&&c?.[k]!==undefined&&c?.[k]!=='')s[k]=c[k];
+  s.myTeam=v21MergeNonNull(s.myTeam,c?.myTeam||{});
+  s.opponent=v21MergeNonNull(s.opponent,c?.opponent||{});
+  s.match=v21MergeNonNull(s.match,c?.match||{});
+
+  const map=[
+    ['teamName','teamName'],['opponent.teamName','opponent.teamName'],['match.venue','match.venue'],['match.refereeColor','match.refereeColor'],
+    ['myTeam.overall','myTeam.overall'],['opponent.overall','opponent.overall'],
+    ['myTeam.goalkeeper','myTeam.goalkeeper'],['myTeam.defence','myTeam.defence'],['myTeam.midfield','myTeam.midfield'],['myTeam.attack','myTeam.attack'],
+    ['opponent.goalkeeper','opponent.goalkeeper'],['opponent.defence','opponent.defence'],['opponent.midfield','opponent.midfield'],['opponent.attack','opponent.attack'],
+    ['opponent.human','opponent.human'],['opponent.manager','opponent.manager'],['opponent.loginBonus','opponent.loginBonus'],['opponent.stadium','opponent.stadium'],
+    ['opponent.trainingCamp','opponent.trainingCamp'],['opponent.secretTraining','opponent.secretTraining'],
+    ['opponent.formation','opponent.formation'],['opponent.style','opponent.style'],['opponent.marking','opponent.marking'],['opponent.offside','opponent.offside']
+  ];
+  for(const [path] of map){
+    const v=getPath(s,path);
+    if(hasValue(v)||typeof v==='boolean')s.fieldMeta[path]={source:'detected',confidence,updatedAt:nowIso()};
+  }
+  s.lastAnalysisAt=nowIso();
+  calcQuality(s);
+
+  if(c?.recommendedTactic){
+    const t=c.recommendedTactic;
+    s.tactic={
+      formation:t.formation||null,gamePlan:t.gamePlan==='Chutar de longe'?'Remate à vista':t.gamePlan,
+      pressure:Number(t.pressure),mentality:Number(t.mentality),tempo:Number(t.tempo),
+      marking:t.marking||'À zona',offside:t.offside||'Não',
+      tackling:t.tackling||'Normal',
+      attackInstruction:t.attackInstruction||'Atacar apenas',
+      midfieldInstruction:t.midfieldInstruction||'Manter posição',
+      defenceInstruction:t.defenceInstruction||'Defender atrás',
+      reason:t.reason||'Gerada a partir da leitura da partida.',
+      confidenceScore:Math.max(.62,Math.min(.93,(s.analysisQuality||70)/100)),
+      generatedAt:nowIso(),engine:'V1 Engine + V2'
+    };
+  }
+}
+function v21ApplyRoster(data){
+  const s=selectedSlot();
+  const raw=Array.isArray(data?.roster)?data.roster:[];
+  const seen=new Map();
+
+  for(const p of raw){
+    const name=String(playerNameValue(p)||'').trim();
+    if(!name)continue;
+    const key=v21NormText(name).replace(/[^a-z0-9]/g,'');
+    if(!key)continue;
+
+    const safe={
+      ...p,
+      name,
+      position:p.position??p.pos??null,
+      training:p.training===true,
+      forSale:p.forSale===true && String(p.saleEvidence||'').toLowerCase()==='transfer_arrows'
+    };
+
+    const prev=seen.get(key);
+    if(!prev) seen.set(key,safe);
+    else seen.set(key,{
+      ...prev,
+      ...Object.fromEntries(Object.entries(safe).filter(([k,v])=>v!==null&&v!==undefined&&v!=='')),
+      training:prev.training||safe.training,
+      forSale:prev.forSale||safe.forSale
+    });
   }
 
+  const roster=[...seen.values()];
+  if(roster.length)s.roster=roster;
+  if(data?.myTeam)s.myTeam=v21MergeNonNull(s.myTeam,data.myTeam);
+  s.status='active';
+  s.lastAnalysisAt=nowIso();
+  s.marketPlan=buildMarketPlan(s);
+}
+
+function normalizeCalendarOutcomeRow(x){
+  const y={...(x||{})};
+
+  const opponent=String(y.opponent||'').trim();
+  const result=String(y.result||'').trim();
+  const out=String(y.outcome||'').toUpperCase().trim();
+  const competition=String(y.competitionType||'').toLowerCase();
+
+  const hasOpponent=!!opponent && !['ni','tbd','a definir','aguardando','?','-'].includes(opponent.toLowerCase());
+  const hasScore=/\d+\s*[-x:]\s*\d+/i.test(result);
+  const hasExplicitOutcome=['V','E','D'].includes(out);
+
+  if((competition==='cup' || competition==='copa' || competition==='taça' || competition==='taca')
+     && !hasOpponent && !hasScore && !hasExplicitOutcome){
+    y.played=false;
+    y.outcome=null;
+    y.result=null;
+    y.conditional=true;
+    y.placeholder=true;
+    return y;
+  }
+
+  if(hasExplicitOutcome){
+    y.outcome=out;
+    y.played=true;
+    y.placeholder=false;
+    return y;
+  }
+
+  if(hasScore){
+    const m=result.match(/(\d+)\s*[-x:]\s*(\d+)/i);
+    const a=Number(m[1]),b=Number(m[2]);
+    y.outcome=a>b?'V':a===b?'E':'D';
+    y.played=true;
+    y.placeholder=false;
+    return y;
+  }
+
+  y.played=!!y.played && hasOpponent;
+  y.placeholder=!hasOpponent;
+  if(y.placeholder && (competition==='cup'||competition==='copa'||competition==='taça'||competition==='taca')){
+    y.conditional=true;
+    y.played=false;
+  }
+  return y;
+}
+function calendarSummary(rows){
+  const done=(rows||[]).filter(x=>x.played && !x.placeholder && ['V','E','D'].includes(String(x.outcome||'').toUpperCase()));
   return {
-    mode:analysisMode,
-    frames:results,
-    joined:results
-      .map(x=>`[Quadro ${x.frame} ~${x.time}s]\n${x.text}`)
-      .join('\n\n')
+    v:done.filter(x=>String(x.outcome).toUpperCase()==='V').length,
+    e:done.filter(x=>String(x.outcome).toUpperCase()==='E').length,
+    d:done.filter(x=>String(x.outcome).toUpperCase()==='D').length
   };
 }
 
+function v21ApplyCalendar(data){
+  const s=selectedSlot(),rows=Array.isArray(data?.matches)?data.matches:[];
+  s.schedule=rows.map(x=>({...normalizeCalendarOutcomeRow(x),skipped:false}));
+  const future=s.schedule.filter(x=>!x.played&&x.dateTime).sort((a,b)=>new Date(a.dateTime)-new Date(b.dateTime))[0];
+  if(future){
+    s.match.nextMatchAt=future.dateTime||s.match.nextMatchAt;
+    s.match.venue=future.venue||s.match.venue;
+    s.opponent.teamName=future.opponent||s.opponent.teamName;
+  }
+  s.lastAnalysisAt=nowIso();
+}
+function v21ApplyResult(r){
+  const s=selectedSlot(),gf=Number(r?.gf),ga=Number(r?.ga);
+  if(!Number.isFinite(gf)||!Number.isFinite(ga))throw new Error('Não consegui identificar o placar final.');
+  s.results.push({
+    createdAt:nowIso(),opponent:r.opponent||s.opponent.teamName,gf,ga,score:r.score||`${gf}-${ga}`,
+    tactic:s.tactic?clone(s.tactic):null,stats:r.stats||{},events:r.events||[],
+    context:{myOverall:s.myTeam.overall,oppOverall:s.opponent.overall,oppFormation:r.oppFormation||s.opponent.formation,myFormation:r.myFormation||s.tactic?.formation||null,oppStyle:s.opponent.style,venue:s.match.venue,referee:s.match.refereeColor,strengthBucket:strengthBucket(s)}
+  });
+  s.tactic=null;
+  if(Number.isFinite(Number(s.round)))s.round=Number(s.round)+1;
+}
+function v21RenderEvidence(frames){
+  $('mediaPreview').innerHTML=frames.slice(0,12).map(f=>`<img src="${f.dataUrl}" alt="Quadro ${Math.round(f.time||0)}s">`).join('');
+}
+async function v21Analyze(files){
+  const n=Number($('analysisSlot').value)||state.selectedSlot;
+  state.selectedSlot=n;
+  const video=files.find(f=>f.type.startsWith('video/'));
+  const images=files.filter(f=>f.type.startsWith('image/'));
+  let frames=[];
+
+  setProgress(5,'Selecionando quadros importantes…');
+
+  if(video){
+    frames=await v21ExtractVideoFrames(video,analysisMode==='tactic'?24:(analysisMode==='market'?28:20));
+  }else if(images.length){
+    for(const f of images)frames.push(await v21ImageToFrame(f));
+  }else{
+    throw new Error('Selecione um vídeo ou imagens do OSM.');
+  }
+
+  v21RenderEvidence(frames);
+  setProgress(18,'Lendo texto localmente com OCR…');
+  const ocr=await v21RunLocalOcr(frames);
+
+  let evidence,result;
+
+  if(analysisMode==='tactic'){
+    const selected=v21SelectRequiredTacticFrames(frames,ocr);
+    const missing=selected.filter(x=>!x.frame).map(x=>x.label);
+
+    // Só bloqueia se faltar uma das 3 bases realmente essenciais.
+    const criticalMissing=selected
+      .filter(x=>['match_overview','my_squad','opponent_squad'].includes(x.type) && !x.frame)
+      .map(x=>x.label);
+
+    if(criticalMissing.length){
+      throw new Error(`Faltaram telas essenciais: ${criticalMissing.join(', ')}. Grave novamente mostrando a partida e os dois elencos.`);
+    }
+
+    evidence=selected.filter(x=>x.frame).map(x=>x.frame);
+
+    // Inclui quadros extras da tela inicial/comparação para capturar dados temporários
+    // como o bônus de sequência de login do rival, que aparece por poucos segundos.
+    const matchExtras=(ocr.frames||[])
+      .map(o=>({o,frame:frames[(o.frame||1)-1]}))
+      .filter(x=>x.frame)
+      .map(x=>({x,score:v21BuildFrameClassification(x.o.text,x.frame,selectedSlot()).match_overview||0}))
+      .filter(x=>x.score>=3)
+      .sort((a,b)=>b.score-a.score)
+      .map(x=>x.x.frame)
+      .filter(f=>!evidence.includes(f))
+      .slice(0,3);
+    evidence.push(...matchExtras);
+
+    // Se algum quadro do Analista ainda não foi classificado, complementa com
+    // os quadros visualmente mais diferentes do vídeo, como fazia a base antiga.
+    if(missing.length){
+      const extras=v21SelectVisualEvidence(frames,6)
+        .filter(f=>!evidence.includes(f));
+      for(const f of extras){
+        if(evidence.length>=8)break;
+        evidence.push(f);
+      }
+      if($('analysisDiagnostics')){
+        $('analysisDiagnostics').textContent=`Algumas telas tiveram classificação incerta (${missing.join(', ')}), mas a análise continuará usando os quadros visuais do vídeo.`;
+      }
+    }
+
+    setProgress(58,'Analisando partida com o motor da V1…');
+    result=await v21AnalyzePackage(ocr,evidence,'tactic');
+    v21ApplyCapture(result.capture||result.captures?.[0]||result);
+    saveState();
+    renderCoverage(selectedSlot());
+    renderAnalysisSummary(selectedSlot());
+    renderPregame();
+    if($('autoTactic').checked && !selectedSlot().tactic)await generateTactic(n);
+    setProgress(100,'Partida analisada');
+    {const q=calcQuality(selectedSlot());setAnalysisRun(selectedSlot(),'tactic',q===100?'success':'warning',`Cobertura ${q}%${selectedSlot().detectionConfidence!==null?` · confiança automática ${selectedSlot().detectionConfidence}%`:''}.`,{quality:q});}
+    job('Partida analisada com o motor da V1 e recursos da V2.','done');
+    return;
+  }
+
+  if(analysisMode==='market'){
+    evidence=v21SelectVisualEvidence(frames,10);
+    setProgress(58,'Lendo elenco completo com o motor da V1…');
+    result=await v21AnalyzePackage(ocr,evidence,'market');
+    v21ApplyRoster(result);
+    saveState();
+    renderMarket();
+    $('analysisContent').innerHTML=`<div class="card" style="margin-top:12px"><h3>Elenco atualizado</h3><p class="muted small">${selectedSlot().roster.length} jogador(es) reconhecido(s).</p></div>`;
+    setProgress(100,'Elenco atualizado');
+    {const rc=(selectedSlot().roster||[]).length,ex=Number(selectedSlot().myTeam?.playerCount),warn=Number.isFinite(ex)&&ex>0&&rc<ex;setAnalysisRun(selectedSlot(),'market',warn?'warning':'success',warn?`Foram reconhecidos ${rc} de ${ex} jogadores.`:`${rc} jogadores reconhecidos.`,{rosterCount:rc,expected:Number.isFinite(ex)?ex:null});}
+    job('Elenco atualizado.','done');
+    return;
+  }
+
+  if(analysisMode==='calendar'){
+    evidence=v21SelectVisualEvidence(frames,5);
+    setProgress(58,'Lendo calendário com o motor da V1…');
+    result=await v21AnalyzePackage(ocr,evidence,'calendar');
+    v21ApplyCalendar(result);
+    saveState();
+    $('analysisContent').innerHTML=`<div class="card" style="margin-top:12px"><h3>Calendário atualizado</h3><p class="muted small">${selectedSlot().schedule.length} partida(s) reconhecida(s).</p><div class="actions"><button class="btn" onclick="showView('info')">Ver calendário e informações</button></div></div>`;
+    renderInfo();
+    setProgress(100,'Calendário atualizado');
+    {const cr=(selectedSlot().schedule||[]).length;setAnalysisRun(selectedSlot(),'calendar',cr?'success':'warning',`${cr} partida(s) reconhecida(s).`,{count:cr});}
+    job('Calendário atualizado.','done');
+    return;
+  }
+
+  evidence=v21SelectVisualEvidence(frames,6);
+  setProgress(58,'Lendo resultado com o motor da V1…');
+  result=await v21AnalyzePackage(ocr,evidence,'result');
+  v21ApplyResult(result);
+  saveState();
+  renderHistory();
+  $('analysisContent').innerHTML=`<div class="card" style="margin-top:12px"><h3>Resultado registrado</h3><p class="muted small">${esc(result.score||`${result.gf}-${result.ga}`)} salvo no histórico e aprendizado.</p></div>`;
+  setProgress(100,'Resultado registrado');
+  setAnalysisRun(selectedSlot(),'result','success',`Resultado ${result.score||`${result.gf}-${result.ga}`} registrado.`);
+  job('Resultado registrado e aprendizado atualizado.','done');
+}
+
+function setAnalysisMode(mode){
+  analysisMode=mode;
+  pendingMediaFiles=[];
+  analysisBusy=false;
+  if($('mediaInput')) $('mediaInput').value='';
+  if($('mediaPreview')) $('mediaPreview').innerHTML='';
+  if($('progressWrap')) $('progressWrap').classList.add('hidden');
+  if($('progressBar')) $('progressBar').style.width='0%';
+  if($('progressText')) $('progressText').textContent='Preparando…';
+  if($('selectedMediaInfo')) $('selectedMediaInfo').textContent='Nenhuma mídia selecionada.';
+  if($('analyzeNowBtn')){
+    $('analyzeNowBtn').disabled=true;
+    $('analyzeNowBtn').textContent='🔎 Analisar mídia agora';
+  }
+  if($('analysisDiagnostics')) $('analysisDiagnostics').textContent='';
+  if($('coverageContent')) $('coverageContent').innerHTML='';
+  if($('analysisContent')) $('analysisContent').innerHTML='';
+  document.querySelectorAll('.mode-card').forEach(b=>b.classList.toggle('active',b.dataset.mode===mode));
+  renderAnalysisStatus();
+  const cfg={
+    tactic:['Enviar vídeo ou imagens da partida','Mostre tela inicial, árbitro, forças e Data Analyst. A IA marca qualquer campo que não conseguir ler.'],
+    market:['Enviar vídeo do elenco','Mostre o elenco completo e os jogadores em treinamento. Não é necessário mostrar a lista de transferências.'],
+    result:['Enviar vídeo do resultado','A V2 pode extrair o placar; por enquanto, o registro manual continua disponível no Pré-jogo.'],
+    calendar:['Enviar vídeo do calendário','Use para capturar próximos jogos e horários; campos não lidos continuarão NI.']
+  }[mode];
+  $('uploadTitle').textContent=cfg[0];$('uploadHelp').textContent=cfg[1];
+}
+window.setAnalysisMode=setAnalysisMode;
+
+async function handleFiles(files){
+  const valid=Array.from(files||[]).filter(f=>{
+    const type=String(f?.type||'');
+    return f && (type.startsWith('video/') || type.startsWith('image/'));
+  });
+
+  if(!valid.length){
+    toast('Selecione um vídeo ou imagem do OSM');
+    return;
+  }
+
+  pendingMediaFiles=valid;
+  renderPreview(valid);
+
+  const totalMb=valid.reduce((a,f)=>a+(f.size||0),0)/1024/1024;
+  $('selectedMediaInfo').textContent=`${valid.length} arquivo(s) selecionado(s) · ${totalMb.toFixed(1)} MB`;
+
+  $('analyzeNowBtn').disabled=false;
+  $('analyzeNowBtn').textContent='🔎 Analisar mídia agora';
+
+  if($('analysisDiagnostics')){
+    $('analysisDiagnostics').textContent='Mídia carregada. Análise iniciando…';
+  }
+
+  // Mantém o comportamento que já funcionava: inicia automaticamente,
+  // mas deixa o botão disponível como fallback no Android.
+  if(!analysisBusy){
+    setTimeout(()=>runPendingAnalysis(),250);
+  }
+}
 async function runPendingAnalysis(){
   if(analysisBusy)return;
-
-  if(!pendingMediaFiles.length){
-    toast('Escolha uma mídia primeiro');
-    return;
-  }
-
-  if(!localStorage.getItem(API_KEY_STORAGE)){
-    apiModal('Configure a API Gemini antes de analisar.');
-    return;
-  }
+  if(!pendingMediaFiles.length){toast('Escolha uma mídia primeiro');return}
+  if(!localStorage.getItem(API_KEY_STORAGE)){apiModal('Configure a API Gemini antes de analisar.');return}
 
   analysisBusy=true;
   setAnalysisRun(selectedSlot(),analysisMode,'processing','Processando mídia, OCR local e IA.');
   $('progressWrap').classList.remove('hidden');
-
-  if($('analysisDiagnostics')){
-    $('analysisDiagnostics').textContent='Usando motor de análise da V1 + recursos da V2.';
-  }
-
+  if($('analysisDiagnostics'))$('analysisDiagnostics').textContent='Usando motor de análise da V1 + recursos da V2.';
   $('analyzeNowBtn').disabled=true;
   $('analyzeNowBtn').textContent='Analisando…';
 
   try{
     await v21Analyze(pendingMediaFiles);
-
-    if($('analysisDiagnostics')){
-      $('analysisDiagnostics').textContent='Análise concluída.';
-    }
+    if($('analysisDiagnostics'))$('analysisDiagnostics').textContent='Análise concluída.';
   }catch(e){
     const msg=e?.message||String(e);
-
-    if($('analysisDiagnostics')){
-      $('analysisDiagnostics').textContent=`Falha: ${msg}`;
-    }
-
+    if($('analysisDiagnostics'))$('analysisDiagnostics').textContent=`Falha: ${msg}`;
     setAnalysisRun(selectedSlot(),analysisMode,'error',msg);
     setProgress(100,'Falha na análise');
     job(msg,'error');
@@ -1535,7 +1996,6 @@ async function runPendingAnalysis(){
     setTimeout(()=>$('progressWrap').classList.add('hidden'),1400);
   }
 }
-
 window.runPendingAnalysis=runPendingAnalysis;
 function renderPreview(files){
   $('mediaPreview').innerHTML=files.slice(0,8).map((f,i)=>{const u=URL.createObjectURL(f);return f.type.startsWith('image/')?`<img src="${u}" alt="Imagem ${i+1}">`:`<video src="${u}" muted controls></video>`}).join('');
@@ -1556,16 +2016,16 @@ function checkNotifications(){
   for(const s of state.slots){if(s.status!=='active'||!s.match.nextMatchAt)continue;const d=new Date(s.match.nextMatchAt).getTime()-Date.now(),target=(settings.notifyMinutes||20)*60000;if(d>0&&d<=target&&!sessionStorage.getItem('notif_'+s.slotNumber+'_'+s.match.nextMatchAt)){new Notification(`OSM · Slot ${s.slotNumber}`,{body:`${s.teamName||'Seu time'} × ${s.opponent.teamName||'adversário'} em ${countdown(s.match.nextMatchAt)}`});sessionStorage.setItem('notif_'+s.slotNumber+'_'+s.match.nextMatchAt,'1')}}
 }
 function findV1StateInBrowser(){
-  const keys=[
+  const keys=[...new Set([
     ...OLD_KEYS,
     'osm_ai_coach_pro_state_v52_clean',
     'osm_ai_coach_pro_state_v52',
     'osm_ai_coach_pro_state_v51',
     'osm_ai_coach_pro_state_v50',
     'osm_ai_coach_pro_state'
-  ];
+  ])];
 
-  for(const key of [...new Set(keys)]){
+  for(const key of keys){
     const raw=safeParse(localStorage.getItem(key),null);
     if(!raw)continue;
 
@@ -1577,6 +2037,7 @@ function findV1StateInBrowser(){
 
     if(src?.slots?.length) return {key,src};
   }
+
   return null;
 }
 
@@ -1590,7 +2051,6 @@ function openV1FilePicker(){
   input.value='';
 
   try{
-    // Melhor caminho no Chrome/Android atual
     if(typeof input.showPicker==='function'){
       input.showPicker();
       return;
@@ -1599,12 +2059,11 @@ function openV1FilePicker(){
     console.warn('showPicker indisponível',e);
   }
 
-  // Fallback compatível
   try{
     input.click();
   }catch(e){
     console.error(e);
-    toast('Não foi possível abrir os arquivos. Tente novamente.');
+    toast('Não foi possível abrir os arquivos');
   }
 }
 
@@ -1618,15 +2077,12 @@ function migrateV1(){
       return;
     }
 
-    // Se não há estado antigo neste domínio, abre o arquivo de backup.
     openV1FilePicker();
   }catch(e){
     console.error(e);
     toast(e?.message||'Falha ao iniciar importação da V1');
   }
 }
-window.migrateV1=migrateV1;
-
 function importV1State(raw){
   const src = raw?.state?.slots ? raw.state : (raw?.slots ? raw : (raw?.data?.slots ? raw.data : null));
   if(!src?.slots || !Array.isArray(src.slots)) throw new Error('Backup da V1 não reconhecido');
@@ -1700,7 +2156,39 @@ function bind(){
   document.querySelectorAll('.nav-btn').forEach(b=>b.addEventListener('click',()=>showView(b.dataset.view)));
   document.querySelectorAll('.mode-card').forEach(b=>b.addEventListener('click',()=>setAnalysisMode(b.dataset.mode)));
   $('apiBtn').onclick=()=>apiModal();$('modalClose').onclick=closeModal;$('modal').addEventListener('click',e=>{if(e.target===$('modal'))closeModal()});
-  $('chooseMediaBtn').onclick=()=>$('mediaInput').click();$('mediaInput').onchange=()=>handleFiles([...$('mediaInput').files]);$('analyzeNowBtn').onclick=runPendingAnalysis;$('analysisSlot').onchange=()=>{state.selectedSlot=Number($('analysisSlot').value)||1;localStorage.setItem(STATE_KEY,JSON.stringify(state));renderSlotSwitcher()};
+  const mediaInput=$('mediaInput');
+  const chooseMediaBtn=$('chooseMediaBtn');
+
+  if(chooseMediaBtn && mediaInput){
+    chooseMediaBtn.onclick=(e)=>{
+      e.preventDefault();
+      e.stopPropagation();
+      mediaInput.value='';
+
+      try{
+        if(typeof mediaInput.showPicker==='function'){
+          mediaInput.showPicker();
+          return;
+        }
+      }catch(err){
+        console.warn('showPicker de mídia indisponível',err);
+      }
+
+      mediaInput.click();
+    };
+
+    mediaInput.onchange=()=>{
+      const files=Array.from(mediaInput.files||[]);
+      if(!files.length){
+        toast('Nenhuma mídia selecionada');
+        return;
+      }
+      handleFiles(files);
+    };
+  }
+
+  $('analyzeNowBtn').onclick=runPendingAnalysis;
+  $('analysisSlot').onchange=()=>{state.selectedSlot=Number($('analysisSlot').value)||1;localStorage.setItem(STATE_KEY,JSON.stringify(state));renderSlotSwitcher()};
   ['dragenter','dragover'].forEach(ev=>$('uploadZone').addEventListener(ev,e=>{e.preventDefault();$('uploadZone').classList.add('drag')}));
   ['dragleave','drop'].forEach(ev=>$('uploadZone').addEventListener(ev,e=>{e.preventDefault();$('uploadZone').classList.remove('drag')}));
   $('uploadZone').addEventListener('drop',e=>handleFiles([...e.dataTransfer.files]));
@@ -1708,26 +2196,23 @@ function bind(){
   $('saveSettingsBtn').onclick=saveSettingsUi;
   $('notifyBtn').onclick=requestNotifications;
 
-  const migrateBtn=$('migrateBtn');
-  const v1Input=$('v1ImportInput');
-
-  if(migrateBtn){
-    migrateBtn.onclick=(e)=>{
+  if($('migrateBtn')){
+    $('migrateBtn').onclick=(e)=>{
       e.preventDefault();
-      e.stopPropagation();
       migrateV1();
     };
   }
 
-  if(v1Input){
-    v1Input.onchange=async()=>{
+  if($('v1ImportInput')){
+    $('v1ImportInput').onchange=async()=>{
+      const input=$('v1ImportInput');
       try{
-        await importV1BackupFile(v1Input.files?.[0]);
+        await importV1BackupFile(input.files?.[0]);
       }catch(e){
         console.error(e);
         toast(e?.message||'Falha ao importar backup da V1');
       }finally{
-        v1Input.value='';
+        input.value='';
       }
     };
   }
