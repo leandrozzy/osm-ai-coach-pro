@@ -4145,3 +4145,127 @@ function persistentTacticHtml(s){
  if(!hasCurrentOpponentAnalysisV70(s))return `<div class="card tactic-persistent"><span class="eyebrow">PRÓXIMO ADVERSÁRIO</span><h3>${esc(next.opponent||'A definir')}</h3><p class="muted">${esc(calendarDateLabelV67(next,s))} · ainda sem análise do rival</p><button class="btn" onclick="openTacticVideoRefreshV59(${s.slotNumber})">Analisar adversário</button></div>`;
  return s.tactic?`<div class="card tactic-persistent"><span class="eyebrow">TÁTICA ATUAL · SLOT ${s.slotNumber}</span><h3>${esc(s.teamName)} × ${esc(s.opponent.teamName)}</h3>${tacticRegimeBadgeV73(s)}${tacticVisualHtmlV60(s.tactic)}<p class="small muted">${esc(s.tactic.reason||'')}</p><div class="actions"><button class="btn" onclick="refreshTacticFromSavedDataV59(${s.slotNumber})">Recalcular</button><button class="btn secondary" onclick="openTacticVideoRefreshV59(${s.slotNumber})">Vídeo novo</button></div></div>`:`<div class="card tactic-persistent"><span class="eyebrow">RIVAL ANALISADO</span><h3>${esc(s.opponent.teamName)}</h3>${tacticRegimeBadgeV73(s)}<button class="btn" onclick="refreshTacticFromSavedDataV59(${s.slotNumber})">Gerar tática</button></div>`;
 }
+
+
+// ===== v7.4b: identidade do usuário leandrozzy + força sempre pelo lado correto =====
+const MY_MANAGER_NAME_V74B='leandrozzy';
+
+function normalizeManagerV74B(v){return normalize(String(v||'')).replace(/^@/,'')}
+
+function detectMySideV74B(capture){
+  const me=MY_MANAGER_NAME_V74B;
+  const myManager=normalizeManagerV74B(capture?.myTeam?.manager||capture?.myTeam?.user||capture?.manager);
+  const oppManager=normalizeManagerV74B(capture?.opponent?.manager||capture?.opponent?.user);
+  if(myManager===me)return 'my';
+  if(oppManager===me)return 'opponent';
+  return null;
+}
+
+function swapTeamSidesV74B(c){
+  const my=structuredClone(c.myTeam||{});
+  const opp=structuredClone(c.opponent||{});
+  c.myTeam={
+    overall:opp.overall,goalkeeper:opp.goalkeeper,defence:opp.defence,midfield:opp.midfield,attack:opp.attack,
+    squadValue:opp.squadValue,playerCount:opp.playerCount,manager:opp.manager,user:opp.user,teamName:opp.teamName
+  };
+  c.opponent={
+    ...my,
+    teamName:my.teamName||c.teamName||null
+  };
+  if(c.teamName&&opp.teamName)c.teamName=opp.teamName;
+  return c;
+}
+
+function enforceIdentityV74B(c){
+  if(!c)return c;
+  const side=detectMySideV74B(c);
+  if(side==='opponent')swapTeamSidesV74B(c);
+
+  // Se a tela trouxe explicitamente leandrozzy em algum lado, isso tem prioridade absoluta.
+  const myManager=normalizeManagerV74B(c?.myTeam?.manager||c?.myTeam?.user);
+  const oppManager=normalizeManagerV74B(c?.opponent?.manager||c?.opponent?.user);
+  if(oppManager===MY_MANAGER_NAME_V74B && myManager!==MY_MANAGER_NAME_V74B)swapTeamSidesV74B(c);
+
+  return c;
+}
+
+function applyVisionResult(result){
+ const mode=activeAnalysisJobV54?.mode||analysisMode;
+ for(let c of result.captures||[]){
+  c=enforceIdentityV74B(c);
+  const n=resolveCaptureSlot(c);if(!n)continue;const s=state.slots[n-1];
+  s.status='active';s.createdAt=s.createdAt||nowIso();s.updatedAt=nowIso();
+
+  for(const k of ['teamName','competitionName','competitionType','round','totalRounds']){
+    if(c[k]!==null&&c[k]!==undefined&&c[k]!=='')s[k]=c[k];
+  }
+
+  if(mode==='market'){
+    applyRosterSnapshotV70(s,c);s.market=[];s.coverage={...s.coverage,squad:true,training:true};
+  }else{
+    s.myTeam=mergeNonNull(s.myTeam,c.myTeam||{});
+    s.opponent=mergeNonNull(s.opponent,c.opponent||{});
+    s.match=mergeNonNull(s.match,c.match||{});
+
+    // Leandrozzy é sempre o usuário deste app.
+    s.myTeam.manager=MY_MANAGER_NAME_V74B;
+
+    if(Array.isArray(c.roster)&&c.roster.length)s.roster=mergePlayers(s.roster,c.roster);
+
+    if(mode==='tactic'){
+      const opp=c.opponent?.teamName||s.opponent.teamName;
+      if(opp){s.opponentAnalysisFor=opp;s.lastOpponentAnalysisAt=nowIso()}
+      s.analysisHistory=s.analysisHistory||[];
+      s.analysisHistory.push({
+        at:nowIso(),opponent:opp,human:s.opponent.human,manager:s.opponent.manager,
+        myOverall:s.myTeam.overall,oppOverall:s.opponent.overall,formation:s.opponent.formation,
+        style:s.opponent.style,marking:s.opponent.marking,offside:s.opponent.offside
+      });
+      if(s.analysisHistory.length>40)s.analysisHistory=s.analysisHistory.slice(-40);
+    }
+  }
+  s.coverage={...s.coverage,...Object.fromEntries((c.screensSeen||[]).map(x=>[x,true]))};
+  s.missing=buildMissing(s,c.missing||[]);
+ }
+}
+
+// Nunca calcula diferença sem confirmar os dois lados.
+function tacticStrengthDiffV58(s){
+ const mine=Number(s?.myTeam?.overall),opp=Number(s?.opponent?.overall);
+ if(!Number.isFinite(mine)||!Number.isFinite(opp))return null;
+ return mine-opp;
+}
+
+function opponentHumanFromCaptureV74B(c){
+ const oppManager=normalizeManagerV74B(c?.opponent?.manager||c?.opponent?.user);
+ if(oppManager===MY_MANAGER_NAME_V74B)return false;
+ if(oppManager)return true;
+ return false;
+}
+
+// reforço no prompt de visão: quem é "meu time" é determinado pelo manager leandrozzy.
+const ORIGINAL_ANALYZE_OCR_PACKAGE_V74B = typeof analyzeOcrPackage==='function' ? analyzeOcrPackage : null;
+async function analyzeOcrPackage(ocr,evidence){
+  if(!ORIGINAL_ANALYZE_OCR_PACKAGE_V74B)throw new Error('Analisador não disponível');
+  const result=await ORIGINAL_ANALYZE_OCR_PACKAGE_V74B(ocr,evidence);
+  for(let c of result.captures||[]){
+    c=enforceIdentityV74B(c);
+    if(c?.opponent){
+      const mgr=normalizeManagerV74B(c.opponent.manager||c.opponent.user);
+      c.opponent.human=!!mgr && mgr!==MY_MANAGER_NAME_V74B;
+    }
+  }
+  return result;
+}
+
+// Garante que qualquer card/explicação use a diferença correta.
+function tacticalRiskLabelV73(s){
+  const diff=tacticStrengthDiffV58(s);
+  if(diff===null)return 'Força NI';
+  if(diff<=-20)return 'Azarão extremo';
+  if(diff<=-10)return 'Azarão';
+  if(diff<=-4)return 'Levemente inferior';
+  if(diff<=6)return 'Equilibrado';
+  if(diff<=14)return 'Favorito';
+  return 'Favorito dominante';
+}

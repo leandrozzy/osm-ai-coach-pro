@@ -685,3 +685,6 @@ button:hover,.btn:hover,.primary:hover,.secondary:hover{box-shadow:0 10px 24px r
 .tactic-regime-badge{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:10px 0 12px;padding:9px 12px;border-radius:13px;background:#0a1d31;border:1px solid #2c4c68}
 .tactic-regime-badge span{color:#e8c66a;font-size:11px;font-weight:1000;text-transform:uppercase;letter-spacing:.08em}
 .tactic-regime-badge b{color:#d8e9f8;font-size:12px}
+
+/* v7.4b */
+.identity-note{padding:8px 10px;border-radius:12px;background:#0a1d31;border:1px solid #284762;color:#abc1d6;font-size:11px}
