@@ -3336,3 +3336,283 @@ function renderHistory(){
  const archiveHtml=archives.length?archives.map(a=>`<div class="history-line"><div><b>${esc(a.competitionName)}</b><span>${esc(a.teamName)} · ${(a.results||[]).length} jogos · ${fmtDateTime(a.finishedAt)}</span></div></div>`).join(''):'<p class="muted">Nenhuma competição finalizada.</p>';
  els.historyContent.innerHTML=`<div class="card"><span class="eyebrow">SLOT ${selectedSlot}</span><h3>Histórico completo</h3><div class="kpis"><div class="kpi"><span>Jogos</span><b>${games.length}</b></div><div class="kpi"><span>V/E/D</span><b>${w}/${d}/${l}</b></div><div class="kpi"><span>Análises</span><b>${analyses.length}</b></div><div class="kpi"><span>Elencos</span><b>${snaps.length}</b></div></div></div>${historySectionV57('Partidas e táticas usadas',gamesHtml)}${historySectionV57('Análises dos adversários',analysisHtml)}${historySectionV57('Evolução do elenco',snapHtml)}${historySectionV57('Evolução da posição',posHtml)}${historySectionV57('Planos IA anteriores',plansHtml)}${historySectionV57('Competições finalizadas',archiveHtml)}`;
 }
+
+
+// ===== v7.1: consistência total de dados + Central de Evolução + Aprendizado IA global =====
+
+// ---------- Freshness do adversário: regra única para TODO o app ----------
+function freshOpponentFieldV71(s,field,fallback='—'){
+  if(!hasCurrentOpponentAnalysisV70(s))return fallback;
+  const v=s?.opponent?.[field];
+  return v===null||v===undefined||v===''?fallback:v;
+}
+function freshOpponentBoolV71(s,field){
+  if(!hasCurrentOpponentAnalysisV70(s))return '—';
+  const v=s?.opponent?.[field];return v===true?'Sim':v===false?'Não':'—';
+}
+function opponentAnalysisStatusV71(s){
+  if(!s?.opponent?.teamName)return 'Sem adversário definido';
+  return hasCurrentOpponentAnalysisV70(s)?`Analisado em ${fmtDateTime(s.lastOpponentAnalysisAt)}`:'Ainda não analisado';
+}
+
+function renderAnalysisSlotStateV54(){
+ const s=state.slots[selectedSlot-1];
+ if(!els.analysisResult)return;
+ if(!s||s.status!=='active'){els.analysisResult.innerHTML='';return}
+ const err=s.lastAnalysisError?.[analysisMode];
+ const isTac=analysisMode==='tactic',isRoster=analysisMode==='market',isCal=analysisMode==='calendar',isRes=analysisMode==='result';
+ let body='';
+ if(isTac){
+   body=`<div class="data-grid">
+    <div class="data-cell"><span>Adversário</span><b>${esc(s.opponent?.teamName||'A definir')}</b></div>
+    <div class="data-cell"><span>Status rival</span><b>${esc(opponentAnalysisStatusV71(s))}</b></div>
+    <div class="data-cell"><span>Minha força</span><b>${esc(s.myTeam?.overall??'NI')}</b></div>
+    <div class="data-cell"><span>Força rival</span><b>${esc(freshOpponentFieldV71(s,'overall'))}</b></div>
+   </div>`;
+ }else if(isRoster){
+   body=`<div class="data-grid"><div class="data-cell"><span>Jogadores</span><b>${esc((s.roster||[]).length)}</b></div><div class="data-cell"><span>Valor do elenco</span><b>${fmtMoney(s.myTeam?.squadValue)}</b></div><div class="data-cell"><span>Última sincronização</span><b>${esc(s.lastRosterSnapshotAt?fmtDateTime(s.lastRosterSnapshotAt):'Ainda não')}</b></div></div>`;
+ }else if(isCal){
+   body=`<div class="data-grid"><div class="data-cell"><span>Partidas</span><b>${esc((s.schedule||[]).length)}</b></div><div class="data-cell"><span>1ª rodada</span><b>${esc(s.calendarStartDateText||'NI')}</b></div></div>`;
+ }else if(isRes){
+   const last=(s.results||[]).slice(-1)[0];
+   body=last?`<div class="data-grid"><div class="data-cell"><span>Último resultado</span><b>${esc(last.score)}</b></div><div class="data-cell"><span>Adversário</span><b>${esc(last.opponent)}</b></div><div class="data-cell"><span>Aprendizado</span><b>Registrado</b></div></div>`:`<p class="muted">Nenhum resultado registrado neste slot.</p>`;
+ }
+ els.analysisResult.innerHTML=`<div class="result-card"><h3>Slot ${selectedSlot} · ${esc(s.teamName)}</h3>${body}${err?`<p class="danger-text small"><b>Último erro:</b> ${esc(err)}</p>`:''}</div>`;
+}
+
+function slotDetailModal(n){
+ const s=state.slots[n-1],fresh=hasCurrentOpponentAnalysisV70(s);
+ const rows=[
+  ['Competição',s.competitionName],['Tipo',s.competitionType],['Rodada',`${s.round??'NI'}/${s.totalRounds??'NI'}`],
+  ['Adversário',s.opponent.teamName||'A definir'],['Análise rival',opponentAnalysisStatusV71(s)],
+  ['Humano',fresh?(s.opponent.human===true?'Sim':s.opponent.human===false?'Não':'NI'):'—'],
+  ['Manager rival',fresh?s.opponent.manager:'—'],['Local',s.match.venue],
+  ['Árbitro',fresh?(s.match.refereeColor||s.match.refereeName||'NI'):'—'],
+  ['Minha força',s.myTeam.overall],['Força rival',freshOpponentFieldV71(s,'overall')],
+  ['Meu G/D/M/A',`${s.myTeam.goalkeeper??'NI'}/${s.myTeam.defence??'NI'}/${s.myTeam.midfield??'NI'}/${s.myTeam.attack??'NI'}`],
+  ['Rival G/D/M/A',fresh?`${s.opponent.goalkeeper??'NI'}/${s.opponent.defence??'NI'}/${s.opponent.midfield??'NI'}/${s.opponent.attack??'NI'}`:'—'],
+  ['Formação rival',freshOpponentFieldV71(s,'formation')],['Plano rival',freshOpponentFieldV71(s,'style')],
+  ['Marcação rival',freshOpponentFieldV71(s,'marking')],['Impedimento rival',freshOpponentBoolV71(s,'offside')],
+  ['CT rival',freshOpponentBoolV71(s,'trainingCamp')],['Treino secreto rival',freshOpponentBoolV71(s,'secretTraining')],
+  ['Bônus rival',fresh&&s.opponent.loginBonus!==null?`${s.opponent.loginBonus}%`:'—']
+ ];
+ openModal(`<h2>Dados · Slot ${n}</h2><table class="tactic-table">${rows.map(([a,b])=>`<tr><td>${esc(a)}</td><td><b>${esc(b)}</b></td></tr>`).join('')}</table>`);
+}
+
+function renderAnalysisResult(result){
+ if(analysisMode==='market'){
+   const s=state.slots[selectedSlot-1];if(els.coveragePanel)els.coveragePanel.classList.add('hidden');els.analysisResult.innerHTML=rosterAnalysisHtmlV55(s);return;
+ }
+ if(analysisMode!=='tactic')return renderAnalysisSlotStateV54();
+ const caps=result.captures||[],cov={};for(const c of caps)for(const x of c.screensSeen||[])cov[x]=true;
+ els.coveragePanel.classList.remove('hidden');
+ els.coveragePanel.innerHTML=`<b>Cobertura detectada</b><div class="coverage-grid">${Object.entries(COVERAGE_LABELS).map(([k,l])=>`<div class="coverage-item ${cov[k]?'ok':'no'}">${cov[k]?'✓':'○'} ${esc(l)}</div>`).join('')}</div>`;
+ els.analysisResult.innerHTML=caps.map(c=>{
+   const n=resolveCaptureSlot(c),slot=n?state.slots[n-1]:null;
+   const analyzed=slot?hasCurrentOpponentAnalysisV70(slot):true;
+   return `<div class="result-card"><h3>${n?`Slot ${n} · `:''}${esc(c.teamName||'Time')}</h3><div class="data-grid">
+    <div class="data-cell"><span>Adversário</span><b>${esc(c.opponent?.teamName||'NI')}</b></div>
+    <div class="data-cell"><span>Minha força</span><b>${esc(c.myTeam?.overall??'NI')}</b></div>
+    <div class="data-cell"><span>Força rival</span><b>${esc(analyzed?(c.opponent?.overall??'NI'):'—')}</b></div>
+    <div class="data-cell"><span>Formação rival</span><b>${esc(analyzed?(c.opponent?.formation??'NI'):'—')}</b></div>
+   </div>${c.recommendedTactic?`<p class="small good-text"><b>Tática gerada:</b> ${esc(c.recommendedTactic.formation)} · ${esc(c.recommendedTactic.gamePlan)}</p>`:''}</div>`;
+ }).join('');
+}
+
+// ---------- Aprendizado IA GLOBAL ----------
+function allLearningGamesV71(){
+ const out=[];
+ for(const s of state.slots||[])for(const r of s.results||[])out.push({...r,_slot:s.slotNumber,_team:s.teamName,_competition:s.competitionName});
+ for(const a of state.archives||[])for(const r of a.results||[])out.push({...r,_slot:a.slotNumber,_team:a.teamName,_competition:a.competitionName,_archived:true});
+ return out.sort((a,b)=>new Date(a.createdAt||0)-new Date(b.createdAt||0));
+}
+function resultOutcomeV71(r){return r.gf>r.ga?'V':r.gf<r.ga?'D':'E'}
+function tacticSignatureV71(r){
+ const t=r?.tactic||{};return [t.formation,t.gamePlan,t.pressure,t.mentality,t.tempo,t.marking,t.offside,t.tackling,t.attackInstruction,t.midfieldInstruction,t.defenceInstruction].join('|');
+}
+function aggregateRecordV71(rows){
+ return {games:rows.length,w:rows.filter(x=>resultOutcomeV71(x)==='V').length,e:rows.filter(x=>resultOutcomeV71(x)==='E').length,d:rows.filter(x=>resultOutcomeV71(x)==='D').length};
+}
+function learningModelV71(){
+ const games=allLearningGamesV71(),humans=games.filter(x=>x.context?.opponentHuman===true),cpu=games.filter(x=>x.context?.opponentHuman===false);
+ const favorite15=games.filter(x=>Number.isFinite(Number(x.context?.myOverall))&&Number.isFinite(Number(x.context?.oppOverall))&&(Number(x.context.myOverall)-Number(x.context.oppOverall)>=15));
+ const humanFav=favorite15.filter(x=>x.context?.opponentHuman===true),humanFavFails=humanFav.filter(x=>resultOutcomeV71(x)!=='V');
+ const bySig=new Map();
+ for(const r of games){
+  const sig=tacticSignatureV71(r);if(!sig.replace(/\|/g,''))continue;
+  const x=bySig.get(sig)||{sig,formation:r.tactic?.formation,plan:r.tactic?.gamePlan,games:0,w:0,e:0,d:0,human:0};
+  x.games++;x[resultOutcomeV71(r).toLowerCase()]++;if(r.context?.opponentHuman===true)x.human++;bySig.set(sig,x)
+ }
+ const tacticStats=[...bySig.values()].sort((a,b)=>b.games-a.games);
+ const underperform=tacticStats.filter(x=>x.games>=1&&(x.e+x.d)>0).slice(0,8);
+ const byTackle={};
+ for(const r of games){
+   const k=r.tactic?.tackling||'NI',x=byTackle[k]||(byTackle[k]={games:0,y:0,red:0});
+   x.games++;x.y+=Number(r.stats?.myYellowCards||0);x.red+=Number(r.stats?.myRedCards||0);
+ }
+ const lessons=[];
+ if(humanFavFails.length){
+   const recent=humanFavFails.slice(-3);
+   lessons.push({level:'high',title:'Favoritismo contra humanos não está garantindo vitória',text:`${humanFavFails.length} empate/derrota em ${humanFav.length} jogo(s) contra humano com vantagem ≥15. A próxima tática contra humano não deve tratar força como fator suficiente.`,samples:humanFav.length});
+   const sigs=[...new Set(recent.map(tacticSignatureV71))].filter(Boolean);
+   if(sigs.length)lessons.push({level:'medium',title:'Evitar repetição cega',text:'Configurações que já empataram/perderam como grande favorito entram como sinal negativo; a IA deve revisar formação, linhas e sliders em vez de copiar.',samples:recent.length});
+ }
+ if(humans.length)lessons.push({level:'info',title:'Base contra humanos',text:`Registro global: ${aggregateRecordV71(humans).w}V / ${aggregateRecordV71(humans).e}E / ${aggregateRecordV71(humans).d}D em ${humans.length} jogos.`,samples:humans.length});
+ if(cpu.length)lessons.push({level:'info',title:'Base contra CPU',text:`Registro global: ${aggregateRecordV71(cpu).w}V / ${aggregateRecordV71(cpu).e}E / ${aggregateRecordV71(cpu).d}D em ${cpu.length} jogos.`,samples:cpu.length});
+ return {games,humans,cpu,favorite15,humanFav,humanFavFails,tacticStats,underperform,byTackle,lessons};
+}
+function learningForPromptV71(s){
+ const m=learningModelV71(),recent=m.games.slice(-12).map(r=>({
+  slot:r._slot,outcome:resultOutcomeV71(r),human:r.context?.opponentHuman,
+  diff:(Number.isFinite(Number(r.context?.myOverall))&&Number.isFinite(Number(r.context?.oppOverall)))?Number(r.context.myOverall)-Number(r.context.oppOverall):null,
+  opponentFormation:r.context?.oppFormation,tactic:r.tactic,score:r.score
+ }));
+ const failedHumanFav=m.humanFavFails.slice(-8).map(r=>({diff:Number(r.context.myOverall)-Number(r.context.oppOverall),score:r.score,opponentFormation:r.context?.oppFormation,tactic:r.tactic}));
+ return {globalGames:m.games.length,humanRecord:aggregateRecordV71(m.humans),cpuRecord:aggregateRecordV71(m.cpu),failedAsHumanFavorite15:failedHumanFav,recent};
+}
+function renderLearning(){
+ const el=document.getElementById('learningContent');if(!el)return;
+ const m=learningModelV71(),hr=aggregateRecordV71(m.humans),cr=aggregateRecordV71(m.cpu);
+ const slot=state.slots[selectedSlot-1],slotGames=(slot?.results||[]),sr=aggregateRecordV71(slotGames);
+ const lessons=m.lessons.length?m.lessons.map(x=>`<div class="learning-rule ${x.level}"><div><b>${esc(x.title)}</b><p>${esc(x.text)}</p></div><span>${x.samples} amostra(s)</span></div>`).join(''):'<p class="muted">Ainda não há jogos suficientes. Cada resultado registrado aumenta a memória global.</p>';
+ const tactics=m.tacticStats.length?m.tacticStats.slice(0,8).map(x=>`<tr><td>${esc(x.formation||'NI')}</td><td>${esc(x.plan||'NI')}</td><td>${x.games}</td><td>${x.w}/${x.e}/${x.d}</td><td>${x.human}</td></tr>`).join(''):'';
+ const cards=Object.entries(m.byTackle).map(([k,v])=>`<div class="learning-mini"><span>${esc(k)}</span><b>${v.games} jogos</b><small>🟨 ${v.y} · 🟥 ${v.red}</small></div>`).join('');
+ const recent=m.games.slice(-10).reverse().map(r=>`<div class="history-line"><div><b>S${r._slot} · ${esc(r._team)} ${esc(r.score)} ${esc(r.opponent)}</b><span>${r.context?.opponentHuman===true?'👤 Humano':r.context?.opponentHuman===false?'🤖 CPU':'NI'} · força ${esc(r.context?.myOverall??'NI')}×${esc(r.context?.oppOverall??'NI')} · ${esc(r.tactic?.formation||'')} ${esc(r.tactic?.gamePlan||'')}</span></div><strong>${resultOutcomeV71(r)}</strong></div>`).join('');
+ el.innerHTML=`<div class="card learning-hero"><span class="eyebrow">MEMÓRIA GLOBAL</span><h3>O aprendizado é compartilhado entre todos os slots</h3><p class="muted">O slot mantém contexto próprio, mas resultados de todos os slots alimentam a próxima decisão tática.</p><div class="kpis"><div class="kpi"><span>Jogos globais</span><b>${m.games.length}</b></div><div class="kpi"><span>Humanos V/E/D</span><b>${hr.w}/${hr.e}/${hr.d}</b></div><div class="kpi"><span>CPU V/E/D</span><b>${cr.w}/${cr.e}/${cr.d}</b></div><div class="kpi"><span>Falhas favorito ≥15 vs humano</span><b>${m.humanFavFails.length}</b></div></div></div>
+ <div class="card"><div class="market-head"><div><span class="eyebrow">REGRAS ATIVAS</span><h3>O que a IA está aprendendo</h3></div><button class="btn secondary" onclick="renderLearning()">Recalcular</button></div>${lessons}</div>
+ <div class="card"><h3>Slot ${selectedSlot} · aprendizado local</h3><div class="kpis"><div class="kpi"><span>Jogos</span><b>${sr.games}</b></div><div class="kpi"><span>V/E/D</span><b>${sr.w}/${sr.e}/${sr.d}</b></div><div class="kpi"><span>Time</span><b>${esc(slot?.teamName||'Livre')}</b></div></div></div>
+ <div class="card"><h3>Desempenho das configurações</h3>${tactics?`<div class="table-scroll"><table class="simple-table"><thead><tr><th>Formação</th><th>Plano</th><th>Jogos</th><th>V/E/D</th><th>vs humano</th></tr></thead><tbody>${tactics}</tbody></table></div>`:'<p class="muted">Sem dados.</p>'}</div>
+ <div class="card"><h3>Disciplina por tipo de entrada</h3><div class="learning-mini-grid">${cards||'<p class="muted">Sem dados.</p>'}</div></div>
+ <div class="card"><h3>Resultados que alimentaram a IA</h3>${recent||'<p class="muted">Nenhum ainda.</p>'}</div>`;
+}
+
+// Injeta aprendizado global no prompt tático de TODOS os slots.
+function tacticPromptV58(s){
+ const diff=tacticStrengthDiffV58(s),band=refereeBandV58(s?.match?.refereeColor||s?.match?.refereeName);
+ const globalLearning=learningForPromptV71(s);
+ return `Você é especialista em OSM 26. Gere UMA tática completa e coerente, sem alternativas.
+
+VOCABULÁRIO OBRIGATÓRIO:
+Estilo de jogo: Jogar pelas alas | Jogo de passes | Bola longa | Contra-ataque | Remate à vista.
+Desarme: Extremo | Agressivo | Normal | Cuidadoso.
+Avançados: Atacar apenas | Apoiar meio-campo | Ajudar a defender.
+Médios: Pressionar na frente | Manter posições | Ajudar a defesa.
+Defesas: Defesas atacantes | Apoiar meio-campo | Defender atrás.
+Marcação: À zona | Homem-a-homem.
+Fazer fora-de-jogo: Sim | Não.
+
+REGRAS:
+- diferença de força atual: ${diff??'NI'};
+- árbitro: ${s?.match?.refereeColor||s?.match?.refereeName||'NI'} (${band});
+- força NÃO substitui contexto. Contra humanos, dê peso extra a formação, plano, local, árbitro e histórico;
+- se houver empate/derrota anterior como favorito ≥15 contra humano, NÃO repita automaticamente a mesma configuração exata;
+- use o aprendizado global como evidência, mas não superajuste com amostra pequena;
+- sliders precisam ser diferentes quando o contexto justificar; não use template fixo;
+- devolva somente nomes existentes no OSM.
+
+DADOS DESTE SLOT:
+${JSON.stringify(tacticContext(s))}
+
+APRENDIZADO GLOBAL DE TODOS OS SLOTS:
+${JSON.stringify(globalLearning)}
+
+RETORNE APENAS JSON:
+formation, gamePlan, pressure, mentality, tempo, marking, offside, tackling,
+attackInstruction, midfieldInstruction, defenceInstruction, confidence, reason.`;
+}
+
+// ---------- Central de Evolução sem nomes / sem treino fixo ----------
+function avgV71(a){const n=a.filter(Number.isFinite);return n.length?n.reduce((x,y)=>x+y,0)/n.length:null}
+function sectorEvolutionStatsV71(s){
+ const req={ATA:3,MEI:3,DEF:4,GOL:1},all={};
+ for(const sec of ['ATA','MEI','DEF','GOL']){
+  const arr=(s.roster||[]).filter(p=>p.sector===sec&&Number.isFinite(Number(p.rating))).map(p=>Number(p.rating)).sort((a,b)=>b-a);
+  const core=arr.slice(0,req[sec]);all[sec]={count:arr.length,coreAvg:avgV71(core),allAvg:avgV71(arr),best:arr[0]??null,weakestCore:core.length?core[core.length-1]:null}
+ }
+ return all;
+}
+function evolutionSnapshotDeltaV71(s){
+ const a=s.rosterSnapshots||[];if(a.length<2)return null;
+ const p=a[a.length-2],q=a[a.length-1];
+ return {value:(Number(q.squadValue)||0)-(Number(p.squadValue)||0),count:(q.count||0)-(p.count||0),from:p.at,to:q.at}
+}
+function evolutionEngineV71(s){
+ const st=sectorEvolutionStatsV71(s),target={ATA:4,MEI:6,DEF:6,GOL:2};
+ const ranked=Object.entries(st).filter(([,x])=>x.coreAvg!==null).sort((a,b)=>a[1].coreAvg-b[1].coreAvg);
+ const weakest=ranked[0]?.[0]||'NI',strongest=ranked.at(-1)?.[0]||'NI';
+ const gaps=Object.entries(target).map(([k,v])=>({sector:k,count:st[k].count,target:v,gap:v-st[k].count}));
+ const shortage=gaps.filter(x=>x.gap>0),surplus=gaps.filter(x=>x.gap<0);
+ const base=Math.max(Number(s.myTeam?.overall)||0,st[weakest]?.coreAvg||0);
+ const upgrade=Math.ceil(base+4);
+ const delta=evolutionSnapshotDeltaV71(s);
+ return {st,target,weakest,strongest,gaps,shortage,surplus,upgrade,delta};
+}
+function localEvolutionPlanHtmlV71(s){
+ const e=evolutionEngineV71(s),event=state.eventIntel||localEventIntel();
+ const weakLabel={ATA:'Ataque',MEI:'Meio-campo',DEF:'Defesa',GOL:'Goleiro'}[e.weakest]||'NI';
+ const saleSlots=(String(event?.name||'').toLowerCase().includes('transfer')||String(event?.description||'').includes('6'))?6:4;
+ const shortage=e.shortage.length?e.shortage.map(x=>`${x.sector} +${x.gap}`).join(' · '):'Plantel equilibrado';
+ const surplus=e.surplus.length?e.surplus.map(x=>`${x.sector} ${Math.abs(x.gap)} acima da meta`).join(' · '):'Sem excesso estrutural';
+ return `<div class="evolution-action-grid">
+  <div class="evolution-action primary"><span>1</span><div><b>Prioridade de melhoria: ${weakLabel}</b><p>Procure perfil OVR ${e.upgrade}+ que entre no XI imediatamente. Não depende de nome específico do mercado.</p></div></div>
+  <div class="evolution-action"><span>2</span><div><b>Giro de transferências</b><p>Mantenha até ${saleSlots} vagas de venda ocupadas quando houver jogadores negociáveis, sem desmontar o XI e a profundidade mínima.</p></div></div>
+  <div class="evolution-action"><span>3</span><div><b>Composição 4 / 6 / 6 / 2</b><p>${shortage}. ${surplus}.</p></div></div>
+  <div class="evolution-action"><span>4</span><div><b>Treino como política, não estado fixo</b><p>Priorize jovens de maior impacto no XI e o setor mais fraco. O app não trata quem estava treinando no último vídeo como uma tarefa permanente.</p></div></div>
+  <div class="evolution-action"><span>5</span><div><b>Amistosos quando compensar</b><p>Use principalmente em eventos de progressão e para acelerar jovens/core; o retorno tende a cair com idade, rating e repetição no mesmo dia.</p></div></div>
+ </div>`;
+}
+function scoutProfileHtmlV71(s){
+ const e=evolutionEngineV71(s),age=e.weakest==='GOL'?'rating prioritário; idade secundária':'preferência ≤24 para maior potencial de treino';
+ return `<div class="scout-profile"><div><span>Setor</span><b>${esc(e.weakest)}</b></div><div><span>OVR alvo</span><b>${e.upgrade}+</b></div><div><span>Idade</span><b>${esc(age)}</b></div><div><span>Regra</span><b>melhorar XI, não apenas banco</b></div></div>`;
+}
+function aiEvolutionPlanHtmlV71(s){
+ const p=s.evolutionPlanV71;if(!p)return `<div class="card"><div class="market-head"><div><span class="eyebrow">IA DE EVOLUÇÃO</span><h3>Plano contextual</h3><p class="muted">Sem nomes de jogadores: trabalha com setores, OVR, profundidade, caixa e evento.</p></div><button class="btn" onclick="generateEvolutionPlanV71(${s.slotNumber})">Gerar plano IA</button></div></div>`;
+ return `<div class="card"><div class="market-head"><div><span class="eyebrow">PLANO IA SALVO</span><h3>${esc(p.summary||'Estratégia de evolução')}</h3><p class="tiny muted">${fmtDateTime(p.generatedAt)}</p></div><button class="btn secondary" onclick="generateEvolutionPlanV71(${s.slotNumber})">Gerar outro</button></div>
+ ${(p.priorities||[]).map((x,i)=>`<div class="plan-step"><span class="n">${i+1}</span><div><b>${esc(x.title||x.action)}</b><div class="small muted">${esc(x.why||x.detail)}</div></div></div>`).join('')}
+ ${(p.scoutProfiles||[]).length?`<h4>Perfis de scout</h4>${p.scoutProfiles.map(x=>`<div class="plan-step"><span class="n">🔎</span><div><b>${esc(x.sector)} · OVR ${esc(x.minimumRating)}+</b><div class="small muted">${esc(x.ageRule)} · ${esc(x.why)}</div></div></div>`).join('')}`:''}</div>`;
+}
+async function generateEvolutionPlanV71(n){
+ const s=state.slots[n-1];if(!localStorage.getItem(API_KEY_STORAGE)){apiModal();return}
+ if(!(s.roster||[]).length){toast('Primeiro sincronize o vídeo do elenco');return}
+ const engine=evolutionEngineV71(s);
+ toast('Gerando estratégia de evolução…');
+ const prompt=`Você é um planejador de evolução de elenco no OSM.
+NÃO cite nomes de jogadores. NÃO presuma a lista de transferências atual.
+Crie plano funcional baseado em: composição, setores, rating, valor do elenco, snapshots, evento ativo e objetivo de melhorar o XI rapidamente.
+Considere: giro de transferências, scout por perfil, treino, amistosos e eventos. Não trate jogadores do último treinamento como uma obrigação fixa.
+Meta de composição: 4 ATA, 6 MEI, 6 DEF, 2 GOL.
+Retorne JSON {"summary":"","priorities":[{"title":"","why":""}],"scoutProfiles":[{"sector":"","minimumRating":0,"ageRule":"","why":""}],"eventActions":[{"action":"","why":""}]}.
+Dados: ${JSON.stringify({overall:s.myTeam.overall,squadValue:s.myTeam.squadValue,sectorStats:engine.st,gaps:engine.gaps,snapshots:(s.rosterSnapshots||[]).slice(-6),event:state.eventIntel})}`;
+ try{
+  const p=await geminiJson([{text:prompt}],{temperature:.08,maxOutputTokens:3500});
+  s.evolutionPlanV71={...p,generatedAt:nowIso()};saveState();renderMarket();toast('Plano salvo')
+ }catch(e){toast(e.message)}
+}
+function renderMarket(){
+ const s=state.slots[selectedSlot-1];if(!s||s.status!=='active'){els.marketContent.innerHTML=`<div class="card"><p class="muted">Slot ${selectedSlot} livre.</p></div>`;return}
+ finalizeRosterSnapshotV57(s);const e=evolutionEngineV71(s),c=rosterCounts(s),d=e.delta;
+ const valueDelta=d?`${d.value>=0?'+':''}${fmtMoney(d.value)}`:'Sem comparação';
+ const sectorCards=['ATA','MEI','DEF','GOL'].map(k=>`<div class="evo-sector"><span>${k}</span><b>${e.st[k].coreAvg!==null?e.st[k].coreAvg.toFixed(1):'NI'}</b><small>${e.st[k].count} jogadores · média core</small></div>`).join('');
+ els.marketContent.innerHTML=`${eventIntelHtml(state.eventIntel||localEventIntel())}
+ <div class="card evolution-dashboard"><div class="market-head"><div><span class="eyebrow">CENTRAL DE EVOLUÇÃO</span><h3>${esc(s.teamName)}</h3><p class="muted">Decisões por estrutura e evolução do elenco — sem depender da lista de transferências.</p></div><button class="btn" onclick="openMarketSnapshot(${selectedSlot})">Sincronizar elenco</button></div>
+ <div class="kpis"><div class="kpi"><span>Força atual</span><b>${esc(s.myTeam.overall)}</b></div><div class="kpi"><span>Valor do elenco</span><b>${fmtMoney(s.myTeam.squadValue)}</b></div><div class="kpi"><span>Variação desde último vídeo</span><b>${esc(valueDelta)}</b></div><div class="kpi"><span>Composição</span><b>${c.ATA}/${c.MEI}/${c.DEF}/${c.GOL}</b></div></div></div>
+ <div class="card"><h3>Força estrutural do XI</h3><div class="evo-sector-grid">${sectorCards}</div><p class="muted small">A prioridade é elevar o setor que limita o XI, não perseguir nomes específicos.</p></div>
+ <div class="card"><h3>Motor de ações</h3>${localEvolutionPlanHtmlV71(s)}</div>
+ <div class="card"><h3>Perfil de scout recomendado</h3>${scoutProfileHtmlV71(s)}</div>
+ ${aiEvolutionPlanHtmlV71(s)}
+ <div class="card"><h3>Evolução por snapshots</h3>${(s.rosterSnapshots||[]).length?`<div class="snapshot-strip">${(s.rosterSnapshots||[]).slice(-8).map(x=>`<div><b>${fmtMoney(x.squadValue)}</b><span>${x.count} jogadores</span><small>${fmtDateTime(x.at)}</small></div>`).join('')}</div>`:'<p class="muted">Sincronize o elenco em dias diferentes para medir evolução.</p>'}</div>`;
+}
+
+// ---------- Navegação/render ----------
+function showView(name){
+ document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x.dataset.view===name));
+ document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+ document.getElementById('view-'+name)?.classList.add('active');
+ renderSlotSwitcher();
+ if(name==='market')renderMarket();
+ if(name==='learning')renderLearning();
+ if(name==='history')renderHistory();
+ if(name==='info')renderInfo();
+ if(name==='analyze'){if(els.slotTarget)els.slotTarget.value=String(selectedSlot);renderAnalysisMode();restoreAnalysisUiV54()}
+}
+function renderAll(){renderToday();renderMarket();renderLearning();renderHistory();hydrateSettings()}
