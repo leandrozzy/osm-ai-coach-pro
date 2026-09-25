@@ -3876,3 +3876,272 @@ async function handleFiles(files){
   setTimeout(()=>els.analysisProgress?.classList.add('hidden'),1200);
  }
 }
+
+
+// ===== v7.3: motor underdog/forte contextual — impede 4-3-3 genérico quando somos mais fracos =====
+function tacticRegimeV73(s){
+  const diff=tacticStrengthDiffV58(s);
+  if(diff===null)return 'unknown';
+  if(diff<=-20)return 'severe-underdog';
+  if(diff<=-10)return 'underdog';
+  if(diff<=-4)return 'slight-underdog';
+  if(diff<=6)return 'balanced';
+  if(diff<=14)return 'favorite';
+  return 'dominant';
+}
+function formationFamilyV73(f){
+  const x=String(f||'');
+  if(/^4-3-3/.test(x))return '433';
+  if(/^4-5-1/.test(x))return '451';
+  if(/^4-2-3-1/.test(x))return '4231';
+  if(/^4-4-2/.test(x))return '442';
+  if(/^5-3-2/.test(x))return '532';
+  if(/^5-3-1-1/.test(x))return '5311';
+  if(/^5-4-1/.test(x))return '541';
+  if(/^6-3-1/.test(x))return '631';
+  if(/^3-/.test(x))return '3back';
+  if(/^4-2-4/.test(x))return '424';
+  return 'other';
+}
+function opponentProfileV73(s){
+  const f=String(s?.opponent?.formation||''),fam=formationFamilyV73(f),style=normalize(s?.opponent?.style),mark=normalize(s?.opponent?.marking);
+  const attacking=['433','3back','424'].includes(fam)||/alas|passes|bola longa/.test(style);
+  const defensive=['451','4231','532','5311','541','631'].includes(fam)||/contra|remate/.test(style);
+  return {formation:f,fam,style,mark,attacking,defensive};
+}
+function underdogBaseV73(s){
+  const diff=tacticStrengthDiffV58(s),reg=tacticRegimeV73(s),opp=opponentProfileV73(s);
+  const away=normalize(s?.match?.venue).includes('fora'),human=s?.opponent?.human===true;
+  const oppCamp=s?.opponent?.trainingCamp===true,secret=s?.opponent?.secretTraining===true;
+  let formation='4-5-1',gamePlan='Remate à vista',pressure=46,mentality=40,tempo=64;
+
+  if(reg==='severe-underdog'){
+    if(opp.fam==='433'||opp.fam==='3back'||opp.fam==='424'){formation='5-3-1-1';gamePlan='Contra-ataque'}
+    else if(opp.defensive){formation='5-3-2';gamePlan='Contra-ataque'}
+    else {formation='5-4-1 B';gamePlan='Contra-ataque'}
+    pressure=34;mentality=27;tempo=70;
+  }else if(reg==='underdog'){
+    if(opp.fam==='433'){formation='4-5-1';gamePlan='Remate à vista'}
+    else if(opp.fam==='3back'||opp.fam==='424'){formation='5-3-2';gamePlan='Contra-ataque'}
+    else if(opp.fam==='532'||opp.fam==='5311'||opp.fam==='541'||opp.fam==='631'){formation='4-5-1';gamePlan='Remate à vista'}
+    else {formation='4-2-3-1';gamePlan='Remate à vista'}
+    pressure=43;mentality=36;tempo=66;
+  }else if(reg==='slight-underdog'){
+    if(opp.fam==='433'){formation='4-5-1';gamePlan='Remate à vista'}
+    else if(opp.defensive){formation='4-4-2 B';gamePlan='Jogo de passes'}
+    else {formation='4-2-3-1';gamePlan='Remate à vista'}
+    pressure=51;mentality=46;tempo=65;
+  }
+
+  if(away){pressure-=3;mentality-=4;tempo+=2}
+  if(human){pressure-=2;mentality-=2;tempo+=2}
+  if(oppCamp||secret){pressure-=3;mentality-=4;tempo+=2}
+
+  pressure=Math.max(25,Math.min(58,pressure));
+  mentality=Math.max(20,Math.min(54,mentality));
+  tempo=Math.max(55,Math.min(76,tempo));
+
+  let attack='Atacar apenas',mid='Manter posições',def='Defender atrás';
+  if(reg==='severe-underdog'){attack='Apoiar meio-campo';mid='Ajudar a defesa';def='Defender atrás'}
+  else if(reg==='underdog'){attack=gamePlan==='Contra-ataque'?'Atacar apenas':'Apoiar meio-campo';mid='Ajudar a defesa';def='Defender atrás'}
+  else if(reg==='slight-underdog'){attack='Atacar apenas';mid='Manter posições';def='Defender atrás'}
+
+  return {formation,gamePlan,pressure,mentality,tempo,attack,mid,def,reg,opp};
+}
+function balancedBaseV73(s){
+  const diff=tacticStrengthDiffV58(s),opp=opponentProfileV73(s),away=normalize(s?.match?.venue).includes('fora');
+  let formation='4-4-2 B',gamePlan='Jogo de passes',pressure=59,mentality=58,tempo=65;
+  if(opp.fam==='433'){formation='4-5-1';gamePlan='Remate à vista';pressure=55;mentality=52;tempo=65}
+  else if(opp.defensive){formation='4-4-2 B';gamePlan='Jogo de passes';pressure=62;mentality=61;tempo=64}
+  else if(opp.fam==='3back'){formation='4-3-3 B';gamePlan='Jogar pelas alas';pressure=64;mentality=64;tempo=67}
+  if(diff!==null&&diff>=4){pressure+=3;mentality+=4}
+  if(away){pressure-=2;mentality-=3}
+  return {formation,gamePlan,pressure,mentality,tempo,attack:'Atacar apenas',mid:'Manter posições',def:'Defender atrás',reg:'balanced',opp};
+}
+function hardFormationGateV73(formation,s){
+  const diff=tacticStrengthDiffV58(s),fam=formationFamilyV73(formation),reg=tacticRegimeV73(s);
+  if(diff===null)return true;
+  // Evita o bug principal: formações ofensivas 4-3-3/3-zagueiros/4-2-4 não passam quando somos claramente inferiores.
+  if(diff<=-10 && ['433','3back','424'].includes(fam))return false;
+  if(diff<=-20 && !['532','5311','541','631'].includes(fam))return false;
+  if(reg==='slight-underdog' && fam==='424')return false;
+  return true;
+}
+function tacticalRiskLabelV73(s){
+  const reg=tacticRegimeV73(s);
+  return {
+    'severe-underdog':'Azarão extremo',
+    'underdog':'Azarão',
+    'slight-underdog':'Levemente inferior',
+    'balanced':'Equilibrado',
+    'favorite':'Favorito',
+    'dominant':'Favorito dominante',
+    'unknown':'Força NI'
+  }[reg]||reg;
+}
+function explainBaseV73(s,b){
+  const diff=tacticStrengthDiffV58(s),opp=b?.opp||opponentProfileV73(s),bits=[];
+  bits.push(`${tacticalRiskLabelV73(s)}${diff!==null?` (${diff>=0?'+':''}${diff})`:''}`);
+  if(opp.formation)bits.push(`rival ${opp.formation}`);
+  if(s?.opponent?.human===true)bits.push('humano');
+  if(normalize(s?.match?.venue).includes('fora'))bits.push('fora');
+  if(s?.opponent?.trainingCamp===true)bits.push('CT rival');
+  return bits.join(' · ');
+}
+
+// Override final do validador: a IA pode propor, mas não pode furar os limites de risco.
+function validateTacticV58(raw,s,source='Gemini'){
+  const src=raw||{},diff=tacticStrengthDiffV58(s),reg=tacticRegimeV73(s);
+  const under=['severe-underdog','underdog','slight-underdog'].includes(reg);
+  const base=under?underdogBaseV73(s):(reg==='balanced'?balancedBaseV73(s):dominantBaseV58(s));
+  const fallback=under?base:fallbackTacticV58(s);
+
+  let formation=FORMATIONS.includes(src.formation)?src.formation:fallback.formation;
+  let gamePlan=normalizeGamePlanV60(src.gamePlan)||normalizeGamePlanV60(fallback.gamePlan)||'Jogo de passes';
+
+  if(!hardFormationGateV73(formation,s)){
+    formation=base.formation;gamePlan=base.gamePlan;
+  }
+
+  let pressure=clampInt(src.pressure),mentality=clampInt(src.mentality),tempo=clampInt(src.tempo);
+
+  if(under){
+    // Para azarão, os sliders da IA só podem variar perto do regime seguro, não virar uma tática ofensiva disfarçada.
+    const p0=base.pressure,m0=base.mentality,t0=base.tempo;
+    pressure=pressure===null?p0:Math.max(p0-6,Math.min(p0+7,pressure));
+    mentality=mentality===null?m0:Math.max(m0-6,Math.min(m0+7,mentality));
+    tempo=tempo===null?t0:Math.max(t0-7,Math.min(t0+7,tempo));
+    if(diff<=-10){pressure=Math.min(58,pressure);mentality=Math.min(55,mentality)}
+    if(diff<=-20){pressure=Math.min(45,pressure);mentality=Math.min(40,mentality)}
+  }else if(reg==='dominant'){
+    const dom=dominantBaseV58(s);
+    if(!/^4-3-3/.test(formation)){formation=dom.formation;gamePlan=normalizeGamePlanV60(dom.gamePlan)||'Jogar pelas alas'}
+    if(pressure===null||pressure<68)pressure=dom.pressure;
+    if(mentality===null||mentality<72)mentality=dom.mentality;
+    if(tempo===null||tempo<68)tempo=dom.tempo;
+    if(pressure===mentality&&mentality===tempo){pressure=dom.pressure;mentality=dom.mentality;tempo=dom.tempo}
+  }else{
+    if(pressure===null)pressure=fallback.pressure;
+    if(mentality===null)mentality=fallback.mentality;
+    if(tempo===null)tempo=fallback.tempo;
+  }
+
+  let attack=normalizeAttackLineV60(src.attackInstruction||base.attack||fallback.attackInstruction);
+  let mid=normalizeMidLineV60(src.midfieldInstruction||base.mid||fallback.midfieldInstruction);
+  let def=normalizeDefLineV60(src.defenceInstruction||base.def||fallback.defenceInstruction);
+
+  if(under){
+    // Linha coerente com inferioridade: bloquear overrides absurdos.
+    if(diff<=-10){
+      if(def==='Defesas atacantes'||def==='Apoiar meio-campo')def='Defender atrás';
+      if(mid==='Pressionar na frente')mid=diff<=-15?'Ajudar a defesa':'Manter posições';
+    }
+    if(diff<=-20){
+      attack=formationFamilyV73(formation)==='5311'||formationFamilyV73(formation)==='541'?'Apoiar meio-campo':'Atacar apenas';
+      mid='Ajudar a defesa';def='Defender atrás';
+    }
+  }else if(reg==='dominant'&&/^4-3-3/.test(formation)){
+    const lines=linePolicyV58(s,formation,gamePlan);
+    if(mid==='Ajudar a defesa')mid=normalizeMidLineV60(lines.mid);
+    if(def==='Defender atrás')def=normalizeDefLineV60(lines.def);
+  }
+
+  const tackling=normalizeTacklingV60(refereeTackling(s?.match?.refereeColor||s?.match?.refereeName,s),'Normal');
+  const marking=under?'À zona':normalizeMarkingV60(src.marking);
+  const offside=under?'Não':(/sim/i.test(String(src.offside))?'Sim':'Não');
+
+  return {
+    formation,gamePlan,pressure,mentality,tempo,marking,offside,tackling,
+    attackInstruction:attack,midfieldInstruction:mid,defenceInstruction:def,
+    confidence:src.confidence||((diff!==null&&Math.abs(diff)>=10)?'alta':'média'),
+    reason:`${explainBaseV73(s,base)}. ${src.reason||'Tática validada pelo motor contextual.'}`,
+    generatedAt:nowIso(),engine:`${source} + motor v7.3`
+  };
+}
+
+function fallbackTacticV58(s){
+  const reg=tacticRegimeV73(s);
+  if(['severe-underdog','underdog','slight-underdog'].includes(reg)){
+    const b=underdogBaseV73(s);
+    return {formation:b.formation,gamePlan:b.gamePlan,pressure:b.pressure,mentality:b.mentality,tempo:b.tempo,
+      marking:'À zona',offside:'Não',tackling:normalizeTacklingV60(refereeTackling(s?.match?.refereeColor||s?.match?.refereeName,s),'Normal'),
+      attackInstruction:b.attack,midfieldInstruction:b.mid,defenceInstruction:b.def,confidence:'alta',
+      reason:`Fallback underdog: ${explainBaseV73(s,b)}.`,generatedAt:nowIso(),engine:'Local v7.3'};
+  }
+  if(reg==='balanced'){
+    const b=balancedBaseV73(s);
+    return {formation:b.formation,gamePlan:b.gamePlan,pressure:b.pressure,mentality:b.mentality,tempo:b.tempo,
+      marking:'À zona',offside:'Não',tackling:normalizeTacklingV60(refereeTackling(s?.match?.refereeColor||s?.match?.refereeName,s),'Normal'),
+      attackInstruction:b.attack,midfieldInstruction:b.mid,defenceInstruction:b.def,confidence:'média',
+      reason:`Fallback equilibrado: ${explainBaseV73(s,b)}.`,generatedAt:nowIso(),engine:'Local v7.3'};
+  }
+  const d=dominantBaseV58(s),lines=linePolicyV58(s,d.formation,d.gamePlan);
+  return {formation:d.formation,gamePlan:d.gamePlan,pressure:d.pressure,mentality:d.mentality,tempo:d.tempo,
+    marking:'À zona',offside:'Não',tackling:normalizeTacklingV60(refereeTackling(s?.match?.refereeColor||s?.match?.refereeName,s),'Normal'),
+    attackInstruction:normalizeAttackLineV60(lines.attack),midfieldInstruction:normalizeMidLineV60(lines.mid),defenceInstruction:normalizeDefLineV60(lines.def),
+    confidence:'média',reason:`Fallback favorito: ${explainBaseV73(s,d)}.`,generatedAt:nowIso(),engine:'Local v7.3'};
+}
+function fallbackTactic(s){return fallbackTacticV58(s)}
+function sanitizeTactic(t,s){return validateTacticV58(t,s,'Gemini')}
+
+// Prompt final com faixas explícitas e formação adversária como restrição.
+function tacticPromptV58(s){
+  const diff=tacticStrengthDiffV58(s),reg=tacticRegimeV73(s),band=refereeBandV58(s?.match?.refereeColor||s?.match?.refereeName);
+  const profile=opponentProfileV73(s),globalLearning=typeof learningForPromptV71==='function'?learningForPromptV71(s):{};
+  const base=['severe-underdog','underdog','slight-underdog'].includes(reg)?underdogBaseV73(s):(reg==='balanced'?balancedBaseV73(s):null);
+  return `Você é especialista em OSM 26. Gere UMA tática específica para ESTE confronto. Não use 4-3-3 por padrão.
+
+VOCABULÁRIO OBRIGATÓRIO:
+Estilo de jogo: Jogar pelas alas | Jogo de passes | Bola longa | Contra-ataque | Remate à vista.
+Desarme: Extremo | Agressivo | Normal | Cuidadoso.
+Avançados: Atacar apenas | Apoiar meio-campo | Ajudar a defender.
+Médios: Pressionar na frente | Manter posições | Ajudar a defesa.
+Defesas: Defesas atacantes | Apoiar meio-campo | Defender atrás.
+Marcação: À zona | Homem-a-homem.
+Fazer fora-de-jogo: Sim | Não.
+
+REGIME DE FORÇA:
+- diferença minha - rival: ${diff??'NI'};
+- regime: ${reg};
+- rival: ${profile.formation||'NI'} / ${s?.opponent?.style||'NI'};
+- local: ${s?.match?.venue||'NI'};
+- humano: ${s?.opponent?.human===true?'SIM':s?.opponent?.human===false?'NÃO':'NI'};
+- árbitro: ${s?.match?.refereeColor||s?.match?.refereeName||'NI'} (${band}).
+
+REGRAS DURAS:
+- se diferença <= -10: NÃO use 4-3-3, linha de 3 defensores ou 4-2-4;
+- se diferença <= -20: priorize 5-3-1-1, 5-3-2, 5-4-1 ou 6-3-1;
+- contra 4-3-3 rival quando somos inferiores: 4-5-1 Remate à vista é referência forte; se a diferença for extrema, pode ir para linha de 5 e Contra-ataque;
+- contra formação muito ofensiva de 3 defensores quando somos inferiores: linha de 5 + Contra-ataque;
+- azarão: marcação à zona e sem fora-de-jogo por padrão; sliders baixos/moderados de pressão e estilo, com tempo suficiente para sair rápido;
+- favorito dominante: 4-3-3 A/B pode ser adequado;
+- empate/derrota anterior como grande favorito contra humano deve impedir repetição cega da mesma configuração;
+- não existe tática invencível: use contexto e aprendizado real.
+
+BASE SEGURA CALCULADA PELO APP:
+${JSON.stringify(base)}
+
+DADOS DESTE SLOT:
+${JSON.stringify(tacticContext(s))}
+
+APRENDIZADO GLOBAL:
+${JSON.stringify(globalLearning)}
+
+RETORNE APENAS JSON:
+formation, gamePlan, pressure, mentality, tempo, marking, offside, tackling,
+attackInstruction, midfieldInstruction, defenceInstruction, confidence, reason.`;
+}
+
+// Mostra no card de tática o regime usado para facilitar auditoria.
+function tacticRegimeBadgeV73(s){
+  const diff=tacticStrengthDiffV58(s);
+  return `<div class="tactic-regime-badge"><span>${esc(tacticalRiskLabelV73(s))}</span><b>${diff===null?'Diferença NI':`${diff>=0?'+':''}${diff} de força`}</b></div>`;
+}
+function persistentTacticHtml(s){
+ if(!s||s.status!=='active')return '';
+ const late=latestPendingResultRow(s);if(late)return `<div class="card tactic-persistent overdue"><span class="eyebrow">RESULTADO PENDENTE</span><h3>${esc(s.teamName)} × ${esc(late.opponent)}</h3><p class="danger-text small">${esc(fmtDateTime(late.dateTime))}</p><button class="btn danger" onclick="openResultVideoV70(${s.slotNumber},${late._i})">Enviar vídeo do resultado</button></div>`;
+ const next=nextFutureRow(s);if(!next)return '';
+ if(next.competitionType==='cup'&&next.hasOpponent===false)return `<div class="card tactic-persistent"><span class="eyebrow">PRÓXIMO COMPROMISSO</span><h3>Taça · adversário a definir</h3><p class="muted">${esc(calendarDateLabelV67(next,s))}</p></div>`;
+ if(!hasCurrentOpponentAnalysisV70(s))return `<div class="card tactic-persistent"><span class="eyebrow">PRÓXIMO ADVERSÁRIO</span><h3>${esc(next.opponent||'A definir')}</h3><p class="muted">${esc(calendarDateLabelV67(next,s))} · ainda sem análise do rival</p><button class="btn" onclick="openTacticVideoRefreshV59(${s.slotNumber})">Analisar adversário</button></div>`;
+ return s.tactic?`<div class="card tactic-persistent"><span class="eyebrow">TÁTICA ATUAL · SLOT ${s.slotNumber}</span><h3>${esc(s.teamName)} × ${esc(s.opponent.teamName)}</h3>${tacticRegimeBadgeV73(s)}${tacticVisualHtmlV60(s.tactic)}<p class="small muted">${esc(s.tactic.reason||'')}</p><div class="actions"><button class="btn" onclick="refreshTacticFromSavedDataV59(${s.slotNumber})">Recalcular</button><button class="btn secondary" onclick="openTacticVideoRefreshV59(${s.slotNumber})">Vídeo novo</button></div></div>`:`<div class="card tactic-persistent"><span class="eyebrow">RIVAL ANALISADO</span><h3>${esc(s.opponent.teamName)}</h3>${tacticRegimeBadgeV73(s)}<button class="btn" onclick="refreshTacticFromSavedDataV59(${s.slotNumber})">Gerar tática</button></div>`;
+}
