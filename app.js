@@ -655,6 +655,7 @@ function geminiFetch(model,key,body){
     }
   );
 }
+function missingRequired(s){ return REQUIRED_TACTIC.filter(p=>{const v=getPath(s,p);return !(hasValue(v)||typeof v==='boolean')}); }
 
 function parseJsonText(text){
   let s=String(text||'').trim()
@@ -1137,7 +1138,6 @@ RETORNE JSON:
   }finally{
     setTimeout(()=>$('progressWrap').classList.add('hidden'),1000);
   }
-}
 
 
 function renderInfo(){
@@ -1965,6 +1965,135 @@ async function runPendingAnalysis(){
   $('analyzeNowBtn').disabled=true;
   $('analyzeNowBtn').textContent='Analisando…';
 
+function v21NormText(s){
+  return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+}
+function v21FileToDataUrl(file){
+  return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(file)});
+}
+function v21LoadImage(src){
+  return new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=src});
+}
+function v21SeekVideo(v,t){
+  return new Promise(res=>{
+    let done=false;
+    const finish=()=>{if(done)return;done=true;v.removeEventListener('seeked',finish);res()};
+    v.addEventListener('seeked',finish,{once:true});
+    v.currentTime=t;
+    setTimeout(finish,900);
+  });
+}
+function v21CaptureVideoFrame(v,t,name){
+  const maxW=1280,scale=Math.min(1,maxW/(v.videoWidth||maxW));
+  const w=Math.max(320,Math.round((v.videoWidth||1280)*scale));
+  const h=Math.max(180,Math.round((v.videoHeight||720)*scale));
+  const c=document.createElement('canvas');c.width=w;c.height=h;
+  const x=c.getContext('2d');x.drawImage(v,0,0,w,h);
+  const dataUrl=c.toDataURL('image/jpeg',.82);
+
+  const tw=96,th=54,tc=document.createElement('canvas');tc.width=tw;tc.height=th;
+  const tx=tc.getContext('2d');tx.drawImage(v,0,0,tw,th);
+  const data=tx.getImageData(0,0,tw,th).data;
+  const thumb=new Uint8Array(tw*th),hist=new Uint16Array(16);
+
+  let bright=0,sat=0,leftWhite=0,leftN=0,bottomWhite=0,bottomN=0,rightBlue=0,rightGreen=0,rightN=0,dark=0;
+  for(let py=0;py<th;py++)for(let px=0;px<tw;px++){
+    const j=py*tw+px,i=j*4,r=data[i],g=data[i+1],b=data[i+2],gray=Math.round((r+g+b)/3);
+    thumb[j]=gray;hist[Math.min(15,Math.floor(gray/16))]++;bright+=gray;
+    const mx=Math.max(r,g,b),mn=Math.min(r,g,b);sat+=mx-mn;if(gray<75)dark++;
+    if(px<tw*.42){leftN++;if(r>190&&g>190&&b>190)leftWhite++}
+    if(py>th*.48){bottomN++;if(r>185&&g>185&&b>185)bottomWhite++}
+    if(px>tw*.42){rightN++;if(b>115&&b>r*1.18&&b>g*.92)rightBlue++;if(g>95&&g>r*1.18&&g>b*.82)rightGreen++}
+  }
+  const count=tw*th;
+  return {
+    dataUrl,base64:dataUrl.split(',')[1],mimeType:'image/jpeg',time:t,name,thumb,hist,
+    brightness:bright/count,saturation:sat/count,score:0,
+    layout:{
+      leftWhite:leftN?leftWhite/leftN:0,
+      bottomWhite:bottomN?bottomWhite/bottomN:0,
+      rightBlue:rightN?rightBlue/rightN:0,
+      rightGreen:rightN?rightGreen/rightN:0,
+      dark:dark/count
+    }
+  };
+}
+function v21CanvasFrameFromImage(img,t,name){
+  const maxW=1280,scale=Math.min(1,maxW/img.naturalWidth);
+  const w=Math.round(img.naturalWidth*scale),h=Math.round(img.naturalHeight*scale);
+  const c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').drawImage(img,0,0,w,h);
+  const dataUrl=c.toDataURL('image/jpeg',.82);
+  return {dataUrl,base64:dataUrl.split(',')[1],mimeType:'image/jpeg',time:t,name,score:100,brightness:160,saturation:30,layout:{}};
+}
+function v21PixelDiff(a,b){
+  if(!a||!b||a.length!==b.length)return 100;
+  let s=0;for(let i=0;i<a.length;i++)s+=Math.abs(a[i]-b[i]);return s/a.length;
+}
+function v21HistDiff(a,b){
+  if(!a||!b)return 100;
+  let s=0,tot=0;for(let i=0;i<a.length;i++){s+=Math.abs(a[i]-b[i]);tot+=Math.max(a[i],b[i])}
+  return tot?100*s/tot:0;
+}
+function v21FrameDistance(a,b){
+  if(!a||!b)return 100;
+  const p=v21PixelDiff(a.thumb,b.thumb),h=v21HistDiff(a.hist,b.hist);
+  const br=Math.abs((a.brightness||0)-(b.brightness||0)),st=Math.abs((a.saturation||0)-(b.saturation||0));
+  return p*.58+h*.22+br*.12+st*.08;
+}
+function v21ScenePriority(f){
+  let p=f.score||0;
+  if((f.brightness||0)>135)p+=12;
+  if((f.saturation||0)<45)p+=8;
+  return p;
+}
+function v21ChooseDiverseFrames(frames,max){
+  if(frames.length<=max)return [...frames].sort((a,b)=>(a.time||0)-(b.time||0));
+  const sorted=[...frames].sort((a,b)=>(a.time||0)-(b.time||0)),picked=[];
+  const bins=Math.min(max,12),dur=(sorted.at(-1)?.time||1)-(sorted[0]?.time||0)||1;
+  for(let b=0;b<bins;b++){
+    const lo=(sorted[0]?.time||0)+dur*b/bins,hi=(sorted[0]?.time||0)+dur*(b+1)/bins;
+    const group=sorted.filter(f=>(f.time||0)>=lo&&(f.time||0)<=hi);
+    if(!group.length)continue;
+    const best=[...group].sort((a,b)=>v21ScenePriority(b)-v21ScenePriority(a))[0];
+    if(best&&!picked.includes(best))picked.push(best);
+  }
+  while(picked.length<max){
+    let best=null,bestScore=-1;
+    for(const f of sorted){
+      if(picked.includes(f))continue;
+      const minD=picked.length?Math.min(...picked.map(p=>v21FrameDistance(f,p))):100;
+      const score=minD+v21ScenePriority(f)*.18;
+      if(score>bestScore){best=f;bestScore=score}
+    }
+    if(!best)break;
+    if(picked.length>=4&&Math.min(...picked.map(p=>v21FrameDistance(best,p)))<7)break;
+    picked.push(best);
+  }
+  return picked.sort((a,b)=>(a.time||0)-(b.time||0)).slice(0,max);
+}
+async function v21ExtractVideoFrames(file,maxFrames=20){
+  const url=URL.createObjectURL(file),v=document.createElement('video');
+  v.src=url;v.muted=true;v.playsInline=true;v.preload='metadata';
+  await new Promise((res,rej)=>{v.onloadedmetadata=res;v.onerror=()=>rej(new Error(`Não consegui abrir ${file.name}`))});
+  const dur=Math.max(.2,v.duration||1),times=[];
+  for(let i=0;i<maxFrames;i++)times.push(Math.min(dur-.08,Math.max(.08,(dur*(i+.5))/maxFrames)));
+  const frames=[];let prev=null;
+  for(const t of times){
+    await v21SeekVideo(v,t);
+    const f=v21CaptureVideoFrame(v,t,file.name),d=prev?v21PixelDiff(prev,f.thumb):100;
+    prev=f.thumb;f.score=d;
+    if(d>=3||frames.length<3)frames.push(f);
+  }
+  URL.revokeObjectURL(url);
+  return v21ChooseDiverseFrames(frames,maxFrames);
+}
+async function v21ImageToFrame(file){
+  const data=await v21FileToDataUrl(file),img=await v21LoadImage(data);
+  return v21CanvasFrameFromImage(img,0,file.name);
+}
+async function v21RunLocalOcr(frames){
+  if(!window.Tesseract)throw new Error('OCR local não carregou. Recarregue a página e tente novamente.');
+  const results=[];let worker=null;
   try{
     await v21Analyze(pendingMediaFiles);
     if($('analysisDiagnostics'))$('analysisDiagnostics').textContent='Análise concluída.';
