@@ -69,3 +69,19 @@ Para migrar:
 7. A V2 converterá os 4 slots, histórico e dados compatíveis.
 
 Não use "Importar backup" da V2 para esse primeiro arquivo antigo; use "Importar backup da V1".
+
+
+CORREÇÃO v2.0.2 - IMPORTAÇÃO DE BACKUP LEGADO
+----------------------------------------------
+Corrigido erro:
+Cannot read properties of undefined (reading 'length')
+
+Causa: objetos marketPlan e outras estruturas antigas da V1 tinham formato diferente.
+Agora a V2 normaliza roster, market, schedule, results, notes, tacticCandidates e marketPlan
+antes de renderizar.
+
+Para atualizar no GitHub, basta substituir:
+- app.js
+- index.html
+
+Os outros arquivos podem permanecer iguais.

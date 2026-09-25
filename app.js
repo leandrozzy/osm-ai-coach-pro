@@ -1,6 +1,6 @@
 'use strict';
 
-const V2_VERSION = '2.0.0';
+const V2_VERSION = '2.0.2';
 const STATE_KEY = 'osm_ai_coach_pro_v2_state';
 const SETTINGS_KEY = 'osm_ai_coach_pro_v2_settings';
 const API_KEY_STORAGE = 'osm_ai_coach_pro_gemini_key';
@@ -73,10 +73,19 @@ function loadState(){
   return d;
 }
 function normalizeSlot(s){
-  s.fieldMeta=s.fieldMeta||defaultMeta();
+  s.fieldMeta=(s.fieldMeta && typeof s.fieldMeta==='object' && !Array.isArray(s.fieldMeta))?s.fieldMeta:defaultMeta();
   for(const [p] of FIELD_DEFS) if(!s.fieldMeta[p]) s.fieldMeta[p]={source:'unknown',confidence:0,updatedAt:null};
-  s.roster=Array.isArray(s.roster)?s.roster:[];s.market=Array.isArray(s.market)?s.market:[];
-  s.results=Array.isArray(s.results)?s.results:[];s.tacticCandidates=Array.isArray(s.tacticCandidates)?s.tacticCandidates:[];
+  s.myTeam=(s.myTeam && typeof s.myTeam==='object' && !Array.isArray(s.myTeam))?s.myTeam:{};
+  s.opponent=(s.opponent && typeof s.opponent==='object' && !Array.isArray(s.opponent))?s.opponent:{};
+  s.match=(s.match && typeof s.match==='object' && !Array.isArray(s.match))?s.match:{};
+  s.roster=Array.isArray(s.roster)?s.roster:[];
+  s.market=Array.isArray(s.market)?s.market:[];
+  s.schedule=Array.isArray(s.schedule)?s.schedule:[];
+  s.results=Array.isArray(s.results)?s.results:[];
+  s.notes=Array.isArray(s.notes)?s.notes:[];
+  s.tacticCandidates=Array.isArray(s.tacticCandidates)?s.tacticCandidates:[];
+  if(!s.marketPlan || typeof s.marketPlan!=='object' || !Array.isArray(s.marketPlan.actions)) s.marketPlan=null;
+  if(s.tactic && typeof s.tactic!=='object') s.tactic=null;
   return s;
 }
 let state=loadState();
@@ -438,7 +447,7 @@ function renderMarket(){
   const s=selectedSlot();if(!s||s.status!=='active'){$('marketContent').innerHTML='<div class="card"><p class="muted">Configure o slot primeiro.</p></div>';return}
   const counts=countPositions(s.roster),health={};
   for(const [p,target] of Object.entries(POS_TARGET)){const n=counts[p]||0;health[p]={n,target,status:n===target?'good':n<target?'bad':'warn'}}
-  const plan=s.marketPlan||buildMarketPlan(s);
+  const plan=(s.marketPlan&&Array.isArray(s.marketPlan.actions))?s.marketPlan:buildMarketPlan(s);
   $('marketContent').innerHTML=`<div class="market-columns"><div class="card"><h3>Saúde do elenco</h3><div class="position-health">${Object.entries(health).map(([p,h])=>`<div class="health ${h.status}"><span>${p}</span><b>${h.n}/${h.target}</b></div>`).join('')}</div><p class="small muted">Regra configurada: 4 ATA · 6 MEI · 6 DEF · 2 GOL. Máximo de 4 jogadores simultaneamente à venda.</p></div>
   <div class="card"><h3>Plano ativo</h3>${plan.actions.length?`<div class="radar-list">${plan.actions.map(a=>`<div class="radar-item"><b>${esc(a)}</b></div>`).join('')}</div>`:'<p class="muted">Envie vídeo do elenco/mercado para gerar recomendações específicas.</p>'}<div class="actions"><button class="btn" onclick="showView('analyze');setAnalysisMode('market')">Ler mercado</button></div></div></div>
   <div class="card" style="margin-top:12px"><h3>Elenco reconhecido</h3>${s.roster.length?rosterTable(s.roster):'<p class="muted">Nenhum jogador reconhecido ainda.</p>'}</div>
@@ -464,7 +473,7 @@ async function analyzeMarketFiles(files){
 }
 
 function renderLearning(){
-  const rows=state.slots.flatMap(s=>(s.results||[]).map(r=>({...r,slotNumber:s.slotNumber})));
+  const rows=state.slots.flatMap(s=>(Array.isArray(s.results)?s.results:[]).map(r=>({...r,slotNumber:s.slotNumber})));
   const w=rows.filter(r=>r.gf>r.ga).length,d=rows.filter(r=>r.gf===r.ga).length,l=rows.filter(r=>r.gf<r.ga).length;
   const byForm={};for(const r of rows){const f=r.tactic?.formation||'NI';byForm[f]??={j:0,w:0,d:0,l:0};byForm[f].j++;if(r.gf>r.ga)byForm[f].w++;else if(r.gf===r.ga)byForm[f].d++;else byForm[f].l++}
   $('learningContent').innerHTML=`<div class="card"><div class="kpis"><div class="kpi"><span>Jogos</span><b>${rows.length}</b></div><div class="kpi"><span>Vitórias</span><b>${w}</b></div><div class="kpi"><span>Empates</span><b>${d}</b></div><div class="kpi"><span>Derrotas</span><b>${l}</b></div></div></div>
@@ -537,21 +546,38 @@ function migrateV1(){
 }
 function importV1State(raw){
   const src = raw?.state?.slots ? raw.state : (raw?.slots ? raw : (raw?.data?.slots ? raw.data : null));
-  if(!src?.slots) throw new Error('Backup da V1 não reconhecido');
+  if(!src?.slots || !Array.isArray(src.slots)) throw new Error('Backup da V1 não reconhecido');
   state.slots=[1,2,3,4].map(n=>{
-    const old=src.slots.find(x=>Number(x.slotNumber)===n)||{};
-    const s=normalizeSlot(deepMerge(defaultSlot(n),old));
+    const old=src.slots.find(x=>Number(x?.slotNumber)===n)||{};
+    const safeOld={
+      ...old,
+      slotNumber:n,
+      myTeam:(old.myTeam&&typeof old.myTeam==='object')?old.myTeam:{},
+      opponent:(old.opponent&&typeof old.opponent==='object')?old.opponent:{},
+      match:(old.match&&typeof old.match==='object')?old.match:{},
+      roster:Array.isArray(old.roster)?old.roster:[],
+      market:Array.isArray(old.market)?old.market:[],
+      schedule:Array.isArray(old.schedule)?old.schedule:[],
+      results:Array.isArray(old.results)?old.results:[],
+      notes:Array.isArray(old.notes)?old.notes:[],
+      tacticCandidates:[],
+      marketPlan:null
+    };
+    const s=normalizeSlot(deepMerge(defaultSlot(n),safeOld));
     for(const [p] of FIELD_DEFS){
       const v=getPath(s,p);
       if(hasValue(v)||typeof v==='boolean') s.fieldMeta[p]={source:'manual',confidence:.85,updatedAt:nowIso()};
     }
     calcQuality(s);
+    if(s.roster.length) s.marketPlan=buildMarketPlan(s);
     return s;
   });
-  state.archives=Array.isArray(src.archives)?src.archives:state.archives;
-  if(src.eventIntel) state.eventIntel=src.eventIntel;
+  state.archives=Array.isArray(src.archives)?src.archives:[];
+  if(src.eventIntel && typeof src.eventIntel==='object') state.eventIntel=src.eventIntel;
   state.selectedSlot=1;
-  saveState();
+  state.decisionLog=Array.isArray(state.decisionLog)?state.decisionLog:[];
+  localStorage.setItem(STATE_KEY,JSON.stringify(state));
+  renderAll();
 }
 async function importV1BackupFile(file){
   if(!file) return;
