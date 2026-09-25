@@ -7,7 +7,7 @@
   <meta name="description" content="OSM AI Coach Pro V2 — central inteligente para 4 slots, análise, tática, mercado e aprendizado.">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="styles.css?v=2.0.4">
+  <link rel="stylesheet" href="styles.css?v=2.0.5">
   <title>OSM AI Coach Pro V2</title>
 </head>
 <body>
@@ -126,13 +126,14 @@
         <label>Seu nick no OSM<input id="userNick" value="leandrozzy"></label>
         <label>Modelo Gemini
           <select id="modelSelect">
-            <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-            <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
-            <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+            <option value="gemini-3.8-flash">Gemini 3.8 Flash</option>
+            <option value="gemini-3.7-flash">Gemini 3.7 Flash</option>
+            <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
+            <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
           </select>
         </label>
         <label>Alerta antes da partida (min)<input id="notifyMinutes" type="number" min="1" max="180" value="20"></label>
-        <label class="check"><input id="notifyEnabled" type="checkbox" checked><span>Notificações enquanto o app estiver aberto/instalado</span></label>
+        <label class="check"><input id="notifyEnabled" type="checkbox" checked><span>Notificações enquanto o app estiver aberto/instalado</span></label><div class="small muted">Leitura de partida: OCR local + Gemini 3.8 Flash.</div>
         <div class="actions">
           <button id="saveSettingsBtn" class="btn">Salvar</button>
           <button id="notifyBtn" class="btn ghost">Permitir notificações</button>
@@ -159,6 +160,7 @@
   </div>
   <div id="toast" class="toast"></div>
 
-  <script src="app.js?v=2.0.4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <script src="app.js?v=2.0.5"></script>
 </body>
 </html>

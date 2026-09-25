@@ -1,6 +1,6 @@
 'use strict';
 
-const V2_VERSION = '2.0.4';
+const V2_VERSION = '2.0.5';
 const STATE_KEY = 'osm_ai_coach_pro_v2_state';
 const SETTINGS_KEY = 'osm_ai_coach_pro_v2_settings';
 const API_KEY_STORAGE = 'osm_ai_coach_pro_gemini_key';
@@ -52,7 +52,7 @@ function defaultSlot(n){
 function defaultState(){
   return {version:V2_VERSION,selectedSlot:1,slots:[1,2,3,4].map(defaultSlot),archives:[],eventIntel:null,decisionLog:[]};
 }
-function defaultSettings(){ return {userNick:'leandrozzy',model:'gemini-2.5-flash',notifyMinutes:20,notifyEnabled:true}; }
+function defaultSettings(){ return {userNick:'leandrozzy',model:'gemini-3.8-flash',notifyMinutes:20,notifyEnabled:true,localOcr:true}; }
 
 function deepMerge(a,b){
   if(!b || typeof b!=='object') return a;
@@ -90,6 +90,7 @@ function normalizeSlot(s){
 }
 let state=loadState();
 let settings={...defaultSettings(),...safeParse(localStorage.getItem(SETTINGS_KEY),{})};
+if(!String(settings.model||'').startsWith('gemini-3.')){settings.model='gemini-3.8-flash';localStorage.setItem(SETTINGS_KEY,JSON.stringify(settings));}
 let analysisMode='tactic';
 let pendingMediaFiles=[];
 let analysisBusy=false;
@@ -379,41 +380,77 @@ function seekWithTimeout(video,t,timeoutMs=5000){
 async function geminiJson(parts,temperature=.1,maxOutputTokens=5000){
   const key=localStorage.getItem(API_KEY_STORAGE);
   if(!key) throw new Error('Configure a chave Gemini');
-  const model=settings.model||'gemini-2.5-flash';
-  const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
-  const body={
-    contents:[{role:'user',parts}],
-    generationConfig:{
-      temperature,
-      maxOutputTokens,
-      responseMimeType:'application/json'
+  const preferred=settings.model||'gemini-3.8-flash';
+  const models=[preferred,'gemini-3.8-flash','gemini-3.7-flash','gemini-3.6-flash'].filter((x,i,a)=>a.indexOf(x)===i);
+
+  let lastError=null;
+  for(const model of models){
+    const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
+    const body={contents:[{role:'user',parts}],generationConfig:{temperature,maxOutputTokens,responseMimeType:'application/json'}};
+    try{
+      const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      const raw=await response.text();
+      if(!response.ok){
+        let msg=raw;
+        try{msg=JSON.parse(raw)?.error?.message||raw}catch{}
+        lastError=new Error(`Gemini ${response.status}: ${String(msg).slice(0,260)}`);
+        if(response.status===404) continue;
+        throw lastError;
+      }
+      let data;
+      try{data=JSON.parse(raw)}catch{throw new Error('Resposta inválida da API Gemini')}
+      const out=(data.candidates||[]).flatMap(c=>c?.content?.parts||[]).map(p=>p?.text||'').join('').trim();
+      if(!out) throw new Error('Gemini não retornou conteúdo');
+      let parsed;
+      try{parsed=JSON.parse(out)}
+      catch{
+        const cleaned=out.replace(/^```json\s*/i,'').replace(/```$/,'').trim();
+        parsed=JSON.parse(cleaned);
+      }
+      if(settings.model!==model){
+        settings.model=model;saveSettings();if($('modelSelect'))$('modelSelect').value=model;
+      }
+      return parsed;
+    }catch(e){
+      lastError=e;
+      if(String(e?.message||'').includes('404')) continue;
+      throw e;
     }
-  };
-  let response;
+  }
+  throw lastError||new Error('Nenhum modelo Gemini disponível');
+}
+
+
+async function localOcrFromBase64(b64){
+  if(!settings.localOcr || typeof Tesseract==='undefined') return '';
   try{
-    response=await fetch(url,{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(body)
-    });
+    const src='data:image/jpeg;base64,'+b64;
+    const result=await Tesseract.recognize(src,'eng',{logger:m=>{
+      if(m?.status==='recognizing text' && Number.isFinite(m.progress)){
+        setProgress(42+Math.round(m.progress*8),'OCR local… '+Math.round(m.progress*100)+'%');
+      }
+    }});
+    return String(result?.data?.text||'').trim();
   }catch(e){
-    throw new Error('Falha de conexão com Gemini: '+(e?.message||e));
+    console.warn('OCR local falhou',e);
+    return '';
   }
-  const raw=await response.text();
-  if(!response.ok){
-    let msg=raw;
-    try{msg=JSON.parse(raw)?.error?.message||raw}catch{}
-    throw new Error(`Gemini ${response.status}: ${String(msg).slice(0,220)}`);
+}
+async function buildLocalOcrContext(imageBase64List){
+  if(!settings.localOcr || typeof Tesseract==='undefined' || !imageBase64List.length) return '';
+  // OCR em poucos quadros estratégicos para não deixar o Android pesado.
+  const picks=[];
+  if(imageBase64List[0])picks.push(imageBase64List[0]);
+  if(imageBase64List[Math.floor(imageBase64List.length/2)])picks.push(imageBase64List[Math.floor(imageBase64List.length/2)]);
+  if(imageBase64List.at(-1))picks.push(imageBase64List.at(-1));
+  const unique=[...new Set(picks)];
+  const texts=[];
+  for(let i=0;i<unique.length;i++){
+    setProgress(38+Math.round((i/unique.length)*12),`OCR local ${i+1}/${unique.length}…`);
+    const t=await localOcrFromBase64(unique[i]);
+    if(t)texts.push(t);
   }
-  let data;
-  try{data=JSON.parse(raw)}catch{throw new Error('Resposta inválida da API Gemini')}
-  const out=(data.candidates||[]).flatMap(c=>c?.content?.parts||[]).map(p=>p?.text||'').join('').trim();
-  if(!out) throw new Error('Gemini não retornou conteúdo');
-  try{return JSON.parse(out)}
-  catch{
-    const cleaned=out.replace(/^```json\s*/i,'').replace(/```$/,'').trim();
-    try{return JSON.parse(cleaned)}catch{throw new Error('Gemini retornou JSON inválido')}
-  }
+  return texts.join('\n--- QUADRO OCR ---\n').slice(0,12000);
 }
 
 function analysisPrompt(){
@@ -423,12 +460,20 @@ function analysisPrompt(){
 async function analyzeFiles(files){
   const n=Number($('analysisSlot').value)||state.selectedSlot;state.selectedSlot=n;job('Preparando mídia…');$('progressWrap').classList.remove('hidden');setProgress(10,'Preparando mídia…');
   try{
-    const parts=[{text:analysisPrompt()}];let images=0;
+    const imagePayloads=[];let images=0;
     for(const f of files){
-      if(f.type.startsWith('image/')){parts.push({inlineData:{mimeType:f.type||'image/jpeg',data:await fileToInline(f)}});images++}
-      else if(f.type.startsWith('video/')){const frames=await videoFrames(f,8);for(const b64 of frames){parts.push({inlineData:{mimeType:'image/jpeg',data:b64}});images++}}
+      if(f.type.startsWith('image/')){
+        const b64=await fileToInline(f);imagePayloads.push({b64,mimeType:f.type||'image/jpeg'});images++;
+      }else if(f.type.startsWith('video/')){
+        const frames=await videoFrames(f,8);
+        for(const b64 of frames){imagePayloads.push({b64,mimeType:'image/jpeg'});images++}
+      }
     }
-    setProgress(55,`Enviando ${images} quadro(s) para análise…`);const data=await geminiJson(parts,.05,6000);setProgress(85,'Validando campos e lado do usuário…');applyAnalysis(n,data);
+    const ocrText=await buildLocalOcrContext(imagePayloads.map(x=>x.b64));
+    const parts=[{text:analysisPrompt()+(ocrText?`\n\nTEXTO OCR LOCAL (use apenas como apoio; confirme visualmente nas imagens):\n${ocrText}`:'')}];
+    for(const img of imagePayloads)parts.push({inlineData:{mimeType:img.mimeType,data:img.b64}});
+    setProgress(58,`Enviando ${images} quadro(s) + OCR local para Gemini 3.8…`);
+    const data=await geminiJson(parts,.05,6000);setProgress(85,'Validando campos e lado do usuário…');applyAnalysis(n,data);
     setProgress(100,'Leitura concluída');job('Leitura concluída. Revise os campos marcados como NI.','done');renderCoverage(state.slots[n-1]);renderAnalysisSummary(state.slots[n-1]);
     if($('autoTactic').checked && !missingRequired(state.slots[n-1]).length) await generateTactic(n);
   }catch(e){job(e.message,'error');toast(e.message)} finally{setTimeout(()=>$('progressWrap').classList.add('hidden'),1200)}
@@ -656,7 +701,7 @@ async function runPendingAnalysis(){
   if(!pendingMediaFiles.length){toast('Escolha uma mídia primeiro');return}
   if(!localStorage.getItem(API_KEY_STORAGE)){apiModal('Configure a API Gemini antes de analisar.');return}
   analysisBusy=true;
-  if($('analysisDiagnostics'))$('analysisDiagnostics').textContent='Análise iniciada…';
+  if($('analysisDiagnostics'))$('analysisDiagnostics').textContent='Análise iniciada: extração de quadros → OCR local → Gemini 3.8.';
   $('analyzeNowBtn').disabled=true;
   $('analyzeNowBtn').textContent='Analisando…';
   try{
@@ -681,7 +726,7 @@ function apiModal(msg=''){
 window.saveApiKey=function(){const v=$('apiKeyInput').value.trim();if(v)localStorage.setItem(API_KEY_STORAGE,v);else localStorage.removeItem(API_KEY_STORAGE);closeModal();hydrateSettings();toast(v?'API salva':'API removida')};
 
 function hydrateSettings(){
-  $('userNick').value=settings.userNick||'leandrozzy';$('modelSelect').value=settings.model||'gemini-2.5-flash';$('notifyMinutes').value=settings.notifyMinutes||20;$('notifyEnabled').checked=!!settings.notifyEnabled;$('apiBtn').textContent=localStorage.getItem(API_KEY_STORAGE)?'API configurada':'API Gemini';
+  $('userNick').value=settings.userNick||'leandrozzy';$('modelSelect').value=settings.model||'gemini-3.8-flash';$('notifyMinutes').value=settings.notifyMinutes||20;$('notifyEnabled').checked=!!settings.notifyEnabled;$('apiBtn').textContent=localStorage.getItem(API_KEY_STORAGE)?'API configurada':'API Gemini';
 }
 function saveSettingsUi(){settings.userNick=$('userNick').value.trim()||'leandrozzy';settings.model=$('modelSelect').value;settings.notifyMinutes=Math.max(1,Math.min(180,Number($('notifyMinutes').value)||20));settings.notifyEnabled=$('notifyEnabled').checked;saveSettings();toast('Configurações salvas')}
 async function requestNotifications(){if(!('Notification'in window)){toast('Notificações não suportadas');return}const p=await Notification.requestPermission();toast(p==='granted'?'Notificações permitidas':'Permissão não concedida')}
