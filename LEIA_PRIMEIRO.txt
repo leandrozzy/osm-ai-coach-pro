@@ -1,0 +1,54 @@
+OSM AI Coach Pro V2 — arquivos para upload manual
+===================================================
+
+IMPORTANTE
+- Estes arquivos foram preparados para ficar TODOS NA RAIZ do repositório.
+- Use somente na branch: v2-development
+- NÃO altere a branch main.
+- O backup-current-2026-09-25 deve permanecer intacto.
+
+ARQUIVOS
+- index.html
+- styles.css
+- app.js
+- manifest.webmanifest
+- icon.svg
+
+COMO SUBIR NO GITHUB
+1. Abra o repositório osm-ai-coach-pro-cloud-v4.
+2. Troque a branch de main para v2-development.
+3. Use Add file > Upload files.
+4. Envie os 5 arquivos acima para a raiz.
+5. Se já existirem, confirme a substituição/commit na v2-development.
+6. Mensagem sugerida: "V2: manager assistant redesign and reliability layer".
+7. NÃO faça Pull Request nem Merge para main ainda.
+
+COMO TESTAR NA VERCEL
+1. Depois do commit na v2-development, abra a Vercel.
+2. Projeto: osm-ai-coach-pro-cloud-v4.
+3. Vá em Deployments.
+4. Procure um deployment cujo Git branch/ref seja v2-development.
+5. Ele deve aparecer como Preview, não Production.
+6. Abra o URL do Preview.
+7. Teste pelo menos:
+   - abrir cada um dos 4 slots;
+   - Config > API Gemini;
+   - Config > Importar dados da V1;
+   - enviar uma imagem/vídeo de partida;
+   - conferir se leandrozzy foi identificado como seu lado;
+   - conferir árbitro;
+   - conferir força própria x rival;
+   - corrigir manualmente um campo NI;
+   - gerar tática;
+   - conferir Desarme com árbitro vermelho/laranja;
+   - copiar tática;
+   - registrar resultado;
+   - abrir Diretor Esportivo.
+
+SE A VERCEL NÃO CRIAR PREVIEW AUTOMÁTICO
+- Vercel > Settings > Git
+- confirme o repositório leandrozzy/osm-ai-coach-pro-cloud-v4
+- Production Branch deve continuar como main
+- volte para Deployments e use Redeploy no commit da v2-development se ele aparecer.
+
+NÃO PROMOVER PARA PRODUÇÃO AINDA.
