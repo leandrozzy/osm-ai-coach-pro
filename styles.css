@@ -698,3 +698,6 @@ button:hover,.btn:hover,.primary:hover,.secondary:hover{box-shadow:0 10px 24px r
 .recalc-status.changed{border-color:#2f8d72;background:#0d2927}.recalc-status.changed b{color:#82e8c2}
 .recalc-status.same{border-color:#80652e;background:#282315}.recalc-status.same b{color:#e8c76d}
 .recalc-status span{font-size:11px;color:#acc1d6}
+
+/* v7.5.1 */
+.stack-hotfix-note{font-size:11px;color:#9fb7cc}

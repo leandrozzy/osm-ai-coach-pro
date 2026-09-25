@@ -4552,3 +4552,64 @@ function tacticModal(n){
 
 // Ao carregar esta versão, repara o que for reparável e invalida o que não for confiável.
 setTimeout(()=>{try{verifyAllStoredIdentityV75();renderAll()}catch(e){console.error(e)}},250);
+
+
+// ===== v7.5.1 hotfix: remove recursão do analisador Gemini =====
+// Na v7.5 o wrapper de analyzeOcrPackage acabava referenciando a si próprio por hoisting,
+// causando "Maximum call stack size exceeded". Esta definição final chama o Gemini diretamente.
+async function analyzeOcrPackage(ocr,evidence){
+  const parts=[{text:hybridPrompt(ocr)}];
+  for(let i=0;i<(evidence||[]).length;i++){
+    const f=evidence[i];
+    parts.push(
+      {text:`Imagem de apoio ${i+1}`},
+      {inlineData:{mimeType:f.mimeType,data:f.base64}}
+    );
+  }
+
+  const result=await geminiJson(parts,{temperature:.03,maxOutputTokens:8500});
+
+  // Corrige identidade após a resposta, sem recursão.
+  for(let c of result?.captures||[]){
+    c=enforceIdentityV74B(c);
+    if(c?.opponent){
+      const mgr=normalizeManagerV74B(c.opponent.manager||c.opponent.user);
+      c.opponent.human=!!mgr && mgr!==MY_MANAGER_NAME_V74B;
+    }
+  }
+  return result;
+}
+
+// Guardas simples para evitar qualquer loop acidental na auditoria de identidade.
+let identityRepairRunningV751=false;
+
+function identityReadyV75(s){
+  if(!s)return false;
+  if(s.identityVerifiedAt)return true;
+  if(identityRepairRunningV751)return false;
+
+  identityRepairRunningV751=true;
+  try{
+    const r=repairStoredIdentityV75(s);
+    if(r.changed||r.verified){
+      saveState();
+      return true;
+    }
+    return false;
+  }finally{
+    identityRepairRunningV751=false;
+  }
+}
+
+function strengthAuditV75(s){
+  const mine=Number(s?.myTeam?.overall);
+  const opp=Number(s?.opponent?.overall);
+  const verified=!!s?.identityVerifiedAt || identityReadyV75(s);
+
+  return {
+    verified,
+    mine:Number.isFinite(mine)?mine:null,
+    opp:Number.isFinite(opp)?opp:null,
+    diff:Number.isFinite(mine)&&Number.isFinite(opp)?mine-opp:null
+  };
+}
