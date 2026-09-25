@@ -1,6 +1,6 @@
 'use strict';
 
-const V2_VERSION = '2.1.0';
+const V2_VERSION = '2.1.1';
 const STATE_KEY = 'osm_ai_coach_pro_v2_state';
 const SETTINGS_KEY = 'osm_ai_coach_pro_v2_settings';
 const API_KEY_STORAGE = 'osm_ai_coach_pro_gemini_key';
@@ -1112,27 +1112,66 @@ function v21BuildFrameClassification(text,frame,slot){
   return score;
 }
 function v21SelectRequiredTacticFrames(frames,ocr){
-  const slot=selectedSlot(),enriched=(ocr.frames||[]).map(o=>{
+  const slot=selectedSlot();
+  const enriched=(ocr.frames||[]).map(o=>{
     const frame=frames[(o.frame||1)-1];
     return {...o,frame,scores:v21BuildFrameClassification(o.text,frame,slot)};
   }).filter(x=>x.frame);
+
   const pick=(key,min=4,exclude=[])=>{
-    const b=[...enriched].filter(x=>!exclude.includes(x.frame)).sort((a,b)=>(b.scores[key]||0)-(a.scores[key]||0))[0];
+    const b=[...enriched]
+      .filter(x=>!exclude.includes(x.frame))
+      .sort((a,b)=>(b.scores[key]||0)-(a.scores[key]||0))[0];
     return b&&(b.scores[key]||0)>=min?b:null;
   };
-  const match=pick('match_overview',5),mine=pick('my_squad',5),opp=pick('opponent_squad',5,mine?[mine.frame]:[]);
-  const mark=pick('analyst_marking',6),form=pick('analyst_formation',6);
-  let summary=pick('analyst_summary',6);
-  if(!summary){
-    const candidates=[mark,form].filter(Boolean).sort((a,b)=>(b.scores.analyst_summary||0)-(a.scores.analyst_summary||0));
-    if(candidates[0]&&(candidates[0].scores.analyst_summary||0)>=5)summary=candidates[0];
-  }
-  const map={match_overview:match,my_squad:mine,opponent_squad:opp,analyst_summary:summary,analyst_marking:mark,analyst_formation:form};
+
+  const match=pick('match_overview',4);
+  const mine=pick('my_squad',4);
+  const opp=pick('opponent_squad',4,mine?[mine.frame]:[]);
+
+  // Analista: thresholds mais tolerantes porque o OCR pode não ler os rótulos,
+  // mas o layout visual ainda mostra claramente as telas.
+  let summary=pick('analyst_summary',3);
+  let mark=pick('analyst_marking',3);
+  let form=pick('analyst_formation',3);
+
+  // Fallback visual: pega quadros com layout típico do Data Analyst
+  // quando a classificação textual falha.
+  const used=new Set([match?.frame,mine?.frame,opp?.frame,summary?.frame,mark?.frame,form?.frame].filter(Boolean));
+  const analystCandidates=[...enriched]
+    .filter(x=>!used.has(x.frame))
+    .map(x=>{
+      const l=x.frame?.layout||{};
+      const visual=(l.leftWhite||0)*12+(l.rightBlue||0)*9+(l.rightGreen||0)*9;
+      const textScore=Math.max(x.scores.analyst_summary||0,x.scores.analyst_marking||0,x.scores.analyst_formation||0);
+      return {...x,_analystScore:visual+textScore};
+    })
+    .sort((a,b)=>b._analystScore-a._analystScore);
+
+  const takeFallback=()=>{
+    const x=analystCandidates.shift();
+    if(x){used.add(x.frame);return x}
+    return null;
+  };
+
+  if(!summary) summary=takeFallback();
+  if(!mark) mark=takeFallback();
+  if(!form) form=takeFallback();
+
   const defs=[
-    ['match_overview','Tela da partida'],['my_squad','Meu elenco'],['opponent_squad','Elenco rival'],
-    ['analyst_summary','Analista resumo'],['analyst_marking','Analista marcação'],['analyst_formation','Analista formação']
+    ['match_overview','Tela da partida',match],
+    ['my_squad','Meu elenco',mine],
+    ['opponent_squad','Elenco rival',opp],
+    ['analyst_summary','Analista resumo',summary],
+    ['analyst_marking','Analista marcação',mark],
+    ['analyst_formation','Analista formação',form]
   ];
-  const result=defs.map(([key,label])=>map[key]?{type:key,label,frame:map[key].frame,text:map[key].text}:{type:key,label,frame:null,text:null});
+
+  const result=defs.map(([key,label,b])=>b
+    ?{type:key,label,frame:b.frame,text:b.text,score:b.scores?.[key]??b._analystScore??0}
+    :{type:key,label,frame:null,text:null,score:0}
+  );
+
   ocr.required=result.reduce((a,x)=>{a[x.type]=x.text||null;return a},{});
   ocr.missingRequired=result.filter(x=>!x.frame).map(x=>x.label);
   return result;
@@ -1150,7 +1189,7 @@ ${JSON.stringify({teamName:s.teamName,myTeam:s.myTeam,opponent:s.opponent,match:
 `;
 
   if(mode==='tactic')return base+`
-O app separou as telas obrigatórias:
+O app separou as telas obrigatórias. Algumas podem ter classificação local incerta; confirme visualmente nas imagens enviadas antes de concluir que faltam:
 ${JSON.stringify(ocr.required||{},null,2)}
 Ausentes:
 ${JSON.stringify(ocr.missingRequired||[])}
@@ -1306,10 +1345,32 @@ async function v21Analyze(files){
   if(analysisMode==='tactic'){
     const selected=v21SelectRequiredTacticFrames(frames,ocr);
     const missing=selected.filter(x=>!x.frame).map(x=>x.label);
-    if(missing.length){
-      throw new Error(`Faltaram telas importantes: ${missing.join(', ')}. Grave novamente parando 1–2 segundos em cada tela.`);
+
+    // Só bloqueia se faltar uma das 3 bases realmente essenciais.
+    const criticalMissing=selected
+      .filter(x=>['match_overview','my_squad','opponent_squad'].includes(x.type) && !x.frame)
+      .map(x=>x.label);
+
+    if(criticalMissing.length){
+      throw new Error(`Faltaram telas essenciais: ${criticalMissing.join(', ')}. Grave novamente mostrando a partida e os dois elencos.`);
     }
+
     evidence=selected.filter(x=>x.frame).map(x=>x.frame);
+
+    // Se algum quadro do Analista ainda não foi classificado, complementa com
+    // os quadros visualmente mais diferentes do vídeo, como fazia a base antiga.
+    if(missing.length){
+      const extras=v21SelectVisualEvidence(frames,6)
+        .filter(f=>!evidence.includes(f));
+      for(const f of extras){
+        if(evidence.length>=8)break;
+        evidence.push(f);
+      }
+      if($('analysisDiagnostics')){
+        $('analysisDiagnostics').textContent=`Algumas telas tiveram classificação incerta (${missing.join(', ')}), mas a análise continuará usando os quadros visuais do vídeo.`;
+      }
+    }
+
     setProgress(58,'Analisando partida com o motor da V1…');
     result=await v21AnalyzePackage(ocr,evidence,'tactic');
     v21ApplyCapture(result.capture||result.captures?.[0]||result);
