@@ -1,6 +1,6 @@
 'use strict';
 
-const V2_VERSION = '2.2.1';
+const V2_VERSION = '2.3.0';
 const STATE_KEY = 'osm_ai_coach_pro_v2_state';
 const SETTINGS_KEY = 'osm_ai_coach_pro_v2_settings';
 const API_KEY_STORAGE = 'osm_ai_coach_pro_gemini_key';
@@ -84,6 +84,7 @@ function normalizeSlot(s){
   s.results=Array.isArray(s.results)?s.results:[];
   s.notes=Array.isArray(s.notes)?s.notes:[];
   s.tacticCandidates=Array.isArray(s.tacticCandidates)?s.tacticCandidates:[];
+  s.analysisRuns=(s.analysisRuns && typeof s.analysisRuns==='object' && !Array.isArray(s.analysisRuns))?s.analysisRuns:{};
   if(!s.marketPlan || typeof s.marketPlan!=='object' || !Array.isArray(s.marketPlan.actions)) s.marketPlan=null;
   if(s.tactic && typeof s.tactic!=='object') s.tactic=null;
   return s;
@@ -105,6 +106,39 @@ function setField(slot,path,value,source='manual',confidence=1){
 }
 function sourceLabel(s){ return ({detected:'Detectado',manual:'Informado',inferred:'Inferido',unknown:'Desconhecido'})[s]||'Desconhecido'; }
 function sourceClass(s){ return 'source-'+(s||'unknown'); }
+
+
+function analysisModeLabel(mode){
+  return ({tactic:'Partida',market:'Elenco',result:'Resultado',calendar:'Calendário'})[mode]||mode;
+}
+function setAnalysisRun(slot,mode,status,message,extra={}){
+  if(!slot)return;
+  slot.analysisRuns=slot.analysisRuns||{};
+  slot.analysisRuns[mode]={status,message:message||'',at:nowIso(),...extra};
+  localStorage.setItem(STATE_KEY,JSON.stringify(state));
+  renderAnalysisStatus();
+}
+function renderAnalysisStatus(){
+  const el=$('analysisStatusPanel');
+  if(!el)return;
+  const s=selectedSlot();
+  const run=s?.analysisRuns?.[analysisMode];
+  if(!run){
+    el.className='analysis-status neutral';
+    el.innerHTML=`<div class="analysis-status-icon">●</div><div><b>Nenhuma análise de ${esc(analysisModeLabel(analysisMode))}</b><span>Escolha uma mídia para começar.</span></div>`;
+    return;
+  }
+  const status=run.status||'neutral';
+  const title=status==='success'
+    ? `Análise de ${analysisModeLabel(analysisMode)} concluída`
+    : status==='warning'
+      ? `Análise de ${analysisModeLabel(analysisMode)} concluída com atenção`
+      : status==='error'
+        ? `Falha na análise de ${analysisModeLabel(analysisMode)}`
+        : `Analisando ${analysisModeLabel(analysisMode)}…`;
+  el.className=`analysis-status ${status}`;
+  el.innerHTML=`<div class="analysis-status-icon">${status==='success'?'✓':status==='warning'?'!':status==='error'?'×':'●'}</div><div><b>${esc(title)}</b><span>${esc(run.message||'')} · ${esc(run.at?fmtDate(run.at):'agora')}</span></div>`;
+}
 
 function toast(msg){
   const el=$('toast');el.textContent=msg;el.classList.add('show');clearTimeout(toast.t);toast.t=setTimeout(()=>el.classList.remove('show'),3000);
@@ -165,7 +199,7 @@ function renderSlotSwitcher(){
 window.selectSlot=function(n){
   state.selectedSlot=n;localStorage.setItem(STATE_KEY,JSON.stringify(state));if($('analysisSlot'))$('analysisSlot').value=String(n);renderAll();
   if($('view-pregame').classList.contains('active'))renderPregame();
-  toast(`Slot ${n} selecionado`);
+  renderAnalysisStatus();toast(`Slot ${n} selecionado`);
 };
 
 function renderDashboard(){
@@ -202,6 +236,9 @@ function renderRadar(){
     else if(!s.tactic) rows.push([`Slot ${s.slotNumber}: gerar tática`,'Dados essenciais prontos','warn']);
     if(s.tactic && shouldRefresh(s)) rows.push([`Slot ${s.slotNumber}: revalidar adversário`,'Jogo próximo; confirme se ele mudou','warn']);
     if(s.marketPlan?.actions?.length) rows.push([`Slot ${s.slotNumber}: evolução do elenco`,s.marketPlan.actions[0],'']);
+    if(s.analysisRuns?.market?.status==='warning')rows.push([`Slot ${s.slotNumber}: revisar elenco`,s.analysisRuns.market.message,'warn']);
+    if(s.analysisRuns?.calendar?.status==='warning')rows.push([`Slot ${s.slotNumber}: revisar calendário`,s.analysisRuns.calendar.message,'warn']);
+    if(s.lastAnalysisAt && Date.now()-new Date(s.lastAnalysisAt).getTime()>24*3600000)rows.push([`Slot ${s.slotNumber}: dados antigos`,'Última leitura tem mais de 24h','warn']);
   }
   $('radarPanel').innerHTML=`<div class="section-head"><div><span class="eyebrow">RADAR</span><h2>Próximas ações</h2></div></div><div class="card radar-list">${rows.length?rows.map(r=>`<div class="radar-item"><div><b>${esc(r[0])}</b><span>${esc(r[1])}</span></div><span class="status ${r[2]}">${r[2]==='danger'?'Urgente':r[2]==='warn'?'Atenção':'Ação'}</span></div>`).join(''):'<p class="muted">Nada urgente agora.</p>'}</div>`;
 }
@@ -1147,7 +1184,7 @@ function renderInfo(){
         <div><span class="eyebrow">CALENDÁRIO</span><h3>Partidas reconhecidas</h3></div>
         <button class="btn ghost tiny" onclick="showView('analyze');setAnalysisMode('calendar')">Ler calendário</button>
       </div>
-      ${cal.length?calendarTableHtml(cal):'<p class="muted">Nenhum calendário analisado ainda.</p>'}
+      ${cal.length?`<div class="calendar-summary"><span class="win">Vitórias <b>${calendarSummary(cal).v}</b></span><span class="draw">Empates <b>${calendarSummary(cal).e}</b></span><span class="loss">Derrotas <b>${calendarSummary(cal).d}</b></span></div>${calendarTableHtml(cal)}`:'<p class="muted">Nenhum calendário analisado ainda.</p>'}
       ${next?`<div class="next-match-note"><b>Próxima partida:</b> ${esc(next.opponent||'NI')} · ${esc(next.venue||'NI')} · ${esc(next.dateTime?fmtDate(next.dateTime):(next.dateText||'Data NI'))}</div>`:''}
     </div>
 
@@ -1191,7 +1228,7 @@ function calendarTableHtml(rows){
       <td>${esc(x.venue)}</td>
       <td>${esc(x.opponent)}</td>
       <td>${esc(x.dateTime?fmtDate(x.dateTime):`${x.dateText||'NI'} ${x.timeText||''}`)}</td>
-      <td>${x.played?`${calendarOutcomeLabel(x)}${x.result?` · ${esc(x.result)}`:''}`:x.skipped?'Ignorado':x.conditional?'Condicional':'Futuro'}</td>
+      <td>${x.played?`<span class="result-badge ${String(x.outcome||'').toUpperCase()==='V'?'win':String(x.outcome||'').toUpperCase()==='E'?'draw':'loss'}">${esc(calendarOutcomeLabel(x))}</span>${x.result?` · ${esc(x.result)}`:''}`:x.skipped?'Ignorado':x.conditional?'Condicional':'Futuro'}</td>
     </tr>`).join('')}</tbody>
   </table></div>`;
 }
@@ -1552,10 +1589,12 @@ Antes de responder, confira se percorreu todas as posições do elenco: atacante
 Leia EXATAMENTE a coluna Pos. Códigos do OSM:
 GR = goleiro; DD/DC/DE = defensores; MDC/MC/MCO/MD/ME = meias; PL/ED/EE = atacantes.
 Camisa laranja = em treinamento, NÃO venda.
-Venda somente quando houver setas/indicador real de transferência.
+Ícones vermelhos de lesão, suspensão ou condição NÃO significam venda.
+Venda somente quando houver claramente o ícone de SETAS de transferência na mesma linha do jogador.
+Para forSale=true, preencha saleEvidence="transfer_arrows". Sem essa evidência, forSale=false.
 Não invente jogador.
 Retorne somente:
-{"roster":[{"name":"","position":null,"rating":null,"value":null,"age":null,"training":false,"forSale":false}],
+{"roster":[{"name":"","position":null,"rating":null,"value":null,"age":null,"training":false,"forSale":false,"saleEvidence":null}],
 "myTeam":{"squadValue":null,"playerCount":null}}`;
 
   if(mode==='calendar')return base+`
@@ -1564,6 +1603,8 @@ Casinha à esquerda = Casa; sem casinha = Fora.
 Taça/troféu = Copa/Taça.
 V/D/E ou placar = partida já jogada.
 Interprete obrigatoriamente: V = Vitória, E = Empate, D = Derrota.
+O círculo com V/E/D é a FONTE DE VERDADE e tem prioridade sobre qualquer inferência pelo placar.
+Nunca inverta o resultado por casa/fora: o placar do calendário está na perspectiva do meu time.
 Retorne outcome exatamente como V, E ou D quando aparecer.
 Extraia futuras e já jogadas.
 Retorne somente:
@@ -1629,14 +1670,66 @@ function v21ApplyCapture(c){
   }
 }
 function v21ApplyRoster(data){
-  const s=selectedSlot(),roster=Array.isArray(data?.roster)?data.roster:[];
+  const s=selectedSlot();
+  const raw=Array.isArray(data?.roster)?data.roster:[];
+  const seen=new Map();
+
+  for(const p of raw){
+    const name=String(playerNameValue(p)||'').trim();
+    if(!name)continue;
+    const key=v21NormText(name).replace(/[^a-z0-9]/g,'');
+    if(!key)continue;
+
+    const safe={
+      ...p,
+      name,
+      position:p.position??p.pos??null,
+      training:p.training===true,
+      forSale:p.forSale===true && String(p.saleEvidence||'').toLowerCase()==='transfer_arrows'
+    };
+
+    const prev=seen.get(key);
+    if(!prev) seen.set(key,safe);
+    else seen.set(key,{
+      ...prev,
+      ...Object.fromEntries(Object.entries(safe).filter(([k,v])=>v!==null&&v!==undefined&&v!=='')),
+      training:prev.training||safe.training,
+      forSale:prev.forSale||safe.forSale
+    });
+  }
+
+  const roster=[...seen.values()];
   if(roster.length)s.roster=roster;
   if(data?.myTeam)s.myTeam=v21MergeNonNull(s.myTeam,data.myTeam);
-  s.status='active';s.lastAnalysisAt=nowIso();s.marketPlan=buildMarketPlan(s);
+  s.status='active';
+  s.lastAnalysisAt=nowIso();
+  s.marketPlan=buildMarketPlan(s);
 }
+
+function normalizeCalendarOutcomeRow(x){
+  const y={...(x||{})};
+  const out=String(y.outcome||'').toUpperCase().trim();
+  if(['V','E','D'].includes(out)){y.outcome=out;y.played=true;return y}
+  const m=String(y.result||'').match(/(\d+)\s*[-x:]\s*(\d+)/i);
+  if(m){
+    const a=Number(m[1]),b=Number(m[2]);
+    y.outcome=a>b?'V':a===b?'E':'D';
+    y.played=true;
+  }
+  return y;
+}
+function calendarSummary(rows){
+  const done=(rows||[]).filter(x=>x.played);
+  return {
+    v:done.filter(x=>String(x.outcome).toUpperCase()==='V').length,
+    e:done.filter(x=>String(x.outcome).toUpperCase()==='E').length,
+    d:done.filter(x=>String(x.outcome).toUpperCase()==='D').length
+  };
+}
+
 function v21ApplyCalendar(data){
   const s=selectedSlot(),rows=Array.isArray(data?.matches)?data.matches:[];
-  s.schedule=rows.map(x=>({...x,skipped:false}));
+  s.schedule=rows.map(x=>({...normalizeCalendarOutcomeRow(x),skipped:false}));
   const future=s.schedule.filter(x=>!x.played&&x.dateTime).sort((a,b)=>new Date(a.dateTime)-new Date(b.dateTime))[0];
   if(future){
     s.match.nextMatchAt=future.dateTime||s.match.nextMatchAt;
@@ -1733,6 +1826,7 @@ async function v21Analyze(files){
     renderPregame();
     if($('autoTactic').checked && !selectedSlot().tactic)await generateTactic(n);
     setProgress(100,'Partida analisada');
+    {const q=calcQuality(selectedSlot());setAnalysisRun(selectedSlot(),'tactic',q===100?'success':'warning',`Cobertura ${q}%${selectedSlot().detectionConfidence!==null?` · confiança automática ${selectedSlot().detectionConfidence}%`:''}.`,{quality:q});}
     job('Partida analisada com o motor da V1 e recursos da V2.','done');
     return;
   }
@@ -1746,6 +1840,7 @@ async function v21Analyze(files){
     renderMarket();
     $('analysisContent').innerHTML=`<div class="card" style="margin-top:12px"><h3>Elenco atualizado</h3><p class="muted small">${selectedSlot().roster.length} jogador(es) reconhecido(s).</p></div>`;
     setProgress(100,'Elenco atualizado');
+    {const rc=(selectedSlot().roster||[]).length,ex=Number(selectedSlot().myTeam?.playerCount),warn=Number.isFinite(ex)&&ex>0&&rc<ex;setAnalysisRun(selectedSlot(),'market',warn?'warning':'success',warn?`Foram reconhecidos ${rc} de ${ex} jogadores.`:`${rc} jogadores reconhecidos.`,{rosterCount:rc,expected:Number.isFinite(ex)?ex:null});}
     job('Elenco atualizado.','done');
     return;
   }
@@ -1759,6 +1854,7 @@ async function v21Analyze(files){
     $('analysisContent').innerHTML=`<div class="card" style="margin-top:12px"><h3>Calendário atualizado</h3><p class="muted small">${selectedSlot().schedule.length} partida(s) reconhecida(s).</p><div class="actions"><button class="btn" onclick="showView('info')">Ver calendário e informações</button></div></div>`;
     renderInfo();
     setProgress(100,'Calendário atualizado');
+    {const cr=(selectedSlot().schedule||[]).length;setAnalysisRun(selectedSlot(),'calendar',cr?'success':'warning',`${cr} partida(s) reconhecida(s).`,{count:cr});}
     job('Calendário atualizado.','done');
     return;
   }
@@ -1771,6 +1867,7 @@ async function v21Analyze(files){
   renderHistory();
   $('analysisContent').innerHTML=`<div class="card" style="margin-top:12px"><h3>Resultado registrado</h3><p class="muted small">${esc(result.score||`${result.gf}-${result.ga}`)} salvo no histórico e aprendizado.</p></div>`;
   setProgress(100,'Resultado registrado');
+  setAnalysisRun(selectedSlot(),'result','success',`Resultado ${result.score||`${result.gf}-${result.ga}`} registrado.`);
   job('Resultado registrado e aprendizado atualizado.','done');
 }
 
@@ -1792,6 +1889,7 @@ function setAnalysisMode(mode){
   if($('coverageContent')) $('coverageContent').innerHTML='';
   if($('analysisContent')) $('analysisContent').innerHTML='';
   document.querySelectorAll('.mode-card').forEach(b=>b.classList.toggle('active',b.dataset.mode===mode));
+  renderAnalysisStatus();
   const cfg={
     tactic:['Enviar vídeo ou imagens da partida','Mostre tela inicial, árbitro, forças e Data Analyst. A IA marca qualquer campo que não conseguir ler.'],
     market:['Enviar vídeo do elenco','Mostre o elenco completo e os jogadores em treinamento. Não é necessário mostrar a lista de transferências.'],
@@ -1821,6 +1919,7 @@ async function runPendingAnalysis(){
   if(!localStorage.getItem(API_KEY_STORAGE)){apiModal('Configure a API Gemini antes de analisar.');return}
 
   analysisBusy=true;
+  setAnalysisRun(selectedSlot(),analysisMode,'processing','Processando mídia, OCR local e IA.');
   $('progressWrap').classList.remove('hidden');
   if($('analysisDiagnostics'))$('analysisDiagnostics').textContent='Usando motor de análise da V1 + recursos da V2.';
   $('analyzeNowBtn').disabled=true;
@@ -1832,6 +1931,7 @@ async function runPendingAnalysis(){
   }catch(e){
     const msg=e?.message||String(e);
     if($('analysisDiagnostics'))$('analysisDiagnostics').textContent=`Falha: ${msg}`;
+    setAnalysisRun(selectedSlot(),analysisMode,'error',msg);
     setProgress(100,'Falha na análise');
     job(msg,'error');
     toast(msg);
