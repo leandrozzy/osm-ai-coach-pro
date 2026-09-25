@@ -5513,3 +5513,406 @@ function persistentTacticHtml(s){
   if(!missing.length)return base;
   return `<div class="card tactic-persistent"><span class="eyebrow">DADOS PENDENTES</span><h3>${esc(s.opponent?.teamName||'Próximo adversário')}</h3>${missingDataInlineHtmlV78(s)}</div>`;
 }
+
+
+// ===== v7.8.1 HOTFIX DEFINITIVO: remove wrappers recursivos da v7.8 =====
+// IMPORTANTE: estas funções são implementações finais independentes.
+// Não usam aliases do tipo *_beforeV78, evitando Maximum call stack size exceeded.
+
+async function handleFiles(files){
+  runtimeCheckV56();
+  if(!files?.length)return;
+
+  // Correção pontual de campo ausente.
+  if(pendingMissingFieldV78){
+    const p=pendingMissingFieldV78;
+    pendingMissingFieldV78=null;
+    try{
+      await analyzeSingleMissingFieldV78(files[0],p.slot,p.key);
+      toast(`${MISSING_FIELD_META_V78[p.key].label} atualizado.`);
+      const s=state.slots[p.slot-1];
+      const remaining=missingTacticFieldsV78(s);
+      if(remaining.length)showMissingFieldPanelV78(p.slot);
+      else{
+        renderAll();
+        toast('Todos os dados obrigatórios estão completos.');
+      }
+    }catch(e){
+      console.error(e);
+      toast(e.message||String(e));
+      showMissingFieldPanelV78(p.slot);
+    }
+    return;
+  }
+
+  if(!localStorage.getItem(API_KEY_STORAGE)){
+    apiModal('Antes de analisar, salve sua chave Gemini.');
+    return;
+  }
+  if(activeAnalysisJobV54?.status==='busy'){
+    toast(`Já existe uma leitura em andamento no Slot ${activeAnalysisJobV54.slot}`);
+    return;
+  }
+
+  const supplement=!!pendingTacticSupplementV72;
+  const jobMode=supplement?'tactic':analysisMode;
+  const jobSlot=supplement?pendingTacticSupplementV72.slot:selectedSlot;
+  const labels={tactic:'Tática',market:'Elenco',calendar:'Calendário',result:'Resultado'};
+
+  activeAnalysisJobV54={
+    slot:jobSlot,mode:jobMode,
+    modeLabel:supplement?'Completar tática':(labels[jobMode]||jobMode),
+    status:'busy',progress:1,text:'Iniciando…',startedAt:nowIso()
+  };
+  analysisTargetOverrideV54=jobSlot;
+  renderGlobalJobV54();
+  await acquireOcrWakeLock();
+  if(els.analysisProgress)els.analysisProgress.classList.remove('hidden');
+
+  try{
+    if(supplement){
+      await handleTacticSupplementV72(files);
+
+    }else if(jobMode==='calendar'){
+      if(els.mediaPreview)els.mediaPreview.innerHTML='';
+      const video=files.find(f=>f.type.startsWith('video/'));
+      const images=files.filter(f=>f.type.startsWith('image/'));
+      let frames=[];
+
+      if(video)frames=await extractUniformFramesV54(video,6);
+      else for(const f of images.slice(0,6))frames.push(await imageFileToFrame(f));
+
+      if(!frames.length)throw new Error('Não encontrei imagens no vídeo do calendário.');
+      if(jobSlot===selectedSlot&&analysisMode===jobMode)renderFramePreview(frames);
+
+      setProgress(35,'Lendo calendário completo…');
+      const result=await analyzeCalendarFramesV54(frames,jobSlot);
+      applyCalendarResultV54(result,jobSlot);
+      if(jobSlot===selectedSlot&&analysisMode===jobMode)renderCalendarResultV54(result,jobSlot);
+
+    }else{
+      const video=files.find(f=>f.type.startsWith('video/'));
+      const images=files.filter(f=>f.type.startsWith('image/'));
+      let frames=[];
+
+      if(jobMode==='tactic'&&video){
+        setProgress(5,'Varredura adaptativa do vídeo…');
+        frames=await extractTacticFramesV72(video);
+      }else if(video){
+        setProgress(6,'Selecionando quadros úteis…');
+        frames=await extractVideoFramesFast(video,frameLimitForMode(jobMode));
+      }else{
+        for(const f of images.slice(0,jobMode==='tactic'?18:frameLimitForMode(jobMode))){
+          frames.push(await imageFileToFrame(f));
+        }
+      }
+
+      if(!frames.length)throw new Error('Não encontrei quadros utilizáveis no vídeo.');
+
+      if(jobMode==='tactic'){
+        setProgress(15,`OCR em ${frames.length} quadros candidatos…`);
+        const ocr=await runLocalOcr(frames);
+        const selected=await selectRequiredTacticFramesRobustV56(frames,ocr,jobSlot);
+        const merged=mergeTacticSelectionV72(jobSlot,selected);
+
+        if(jobSlot===selectedSlot&&analysisMode==='tactic'){
+          renderRequiredTacticPreviewV72(merged,jobSlot);
+        }
+        await finishTacticFromPartialV72(jobSlot);
+
+      }else{
+        if(jobSlot===selectedSlot&&analysisMode===jobMode)renderFramePreview(frames.slice(0,8));
+        setProgress(18,`OCR local em ${frames.length} quadros…`);
+        const ocr=await runLocalOcr(frames);
+
+        if(jobMode==='result'){
+          const evidence=selectVisualEvidence(frames,evidenceLimitForMode(jobMode));
+          setProgress(58,'Lendo resultado e cartões…');
+          const result=await analyzeResultOcr(ocr,evidence);
+          await applyResultVideoV54(result,jobSlot);
+          if(jobSlot===selectedSlot&&analysisMode===jobMode)renderResultVideo(result);
+
+        }else{
+          const evidence=selectVisualEvidence(frames,evidenceLimitForMode(jobMode));
+          setProgress(58,'Lendo elenco e posições…');
+          const result=await analyzeOcrPackage(ocr,evidence);
+          applyVisionResult(result);
+
+          const ss=state.slots[jobSlot-1];
+          ss.roster=(ss.roster||[]).map(p=>({
+            ...p,
+            sector:normalizeRosterSectorV55(p),
+            training:p.training===true
+          }));
+          finalizeRosterSnapshotV57(ss);
+          ss.lastRosterSnapshotAt=nowIso();
+          ss.market=[];
+
+          if(jobSlot===selectedSlot&&analysisMode===jobMode)renderAnalysisResult(result);
+        }
+      }
+    }
+
+    const ss=state.slots[jobSlot-1];
+    ss.lastAnalysisByMode=ss.lastAnalysisByMode||{};
+    ss.lastAnalysisByMode[jobMode]=nowIso();
+    ss.lastAnalysisError=ss.lastAnalysisError||{};
+    delete ss.lastAnalysisError[jobMode];
+
+    state.lastAnalysisAt=nowIso();
+    saveState();
+    setProgress(100,'Concluído');
+
+    activeAnalysisJobV54.status='done';
+    activeAnalysisJobV54.text='Concluído';
+    renderGlobalJobV54();
+    cacheAnalysisUiV54(jobSlot,jobMode);
+
+    setTimeout(()=>{
+      if(activeAnalysisJobV54?.status==='done'){
+        activeAnalysisJobV54=null;
+        renderGlobalJobV54();
+      }
+    },5000);
+
+  }catch(e){
+    console.error(e);
+    const ss=state.slots[jobSlot-1];
+    ss.lastAnalysisError=ss.lastAnalysisError||{};
+    ss.lastAnalysisError[jobMode]=String(e.message||e);
+    saveState();
+
+    activeAnalysisJobV54.status='error';
+    activeAnalysisJobV54.text=String(e.message||e);
+    activeAnalysisJobV54.progress=100;
+    renderGlobalJobV54();
+
+    if(jobMode==='tactic'){
+      const merged=mergeTacticSelectionV72(jobSlot,[]);
+      if(jobSlot===selectedSlot&&analysisMode==='tactic'){
+        renderRequiredTacticPreviewV72(merged,jobSlot);
+        els.analysisResult.innerHTML=`<div class="result-card">
+          <h3 class="warn-text">Leitura parcial salva</h3>
+          <p>${esc(e.message||e)}</p>
+          <p class="muted small">As telas já detectadas foram preservadas. Envie somente o que faltou.</p>
+        </div>`;
+      }
+    }else if(jobSlot===selectedSlot&&analysisMode===jobMode){
+      els.analysisResult.innerHTML=`<div class="result-card">
+        <h3 class="danger-text">Falha na análise</h3>
+        <p>${esc(e.message||e)}</p>
+      </div>`;
+    }
+    cacheAnalysisUiV54(jobSlot,jobMode);
+
+  }finally{
+    analysisTargetOverrideV54=null;
+    await releaseOcrWakeLock();
+    setTimeout(()=>els.analysisProgress?.classList.add('hidden'),1200);
+  }
+}
+
+async function generateTacticForSlot(n,silent=false){
+  const s=state.slots[n-1];
+  if(!s||s.status!=='active')return;
+
+  // Qualquer dado obrigatório ausente abre o painel de correção.
+  const missing=missingTacticFieldsV78(s);
+  if(missing.length){
+    if(!silent)showMissingFieldPanelV78(n);
+    return;
+  }
+
+  const repaired=repairStoredIdentityV75(s);
+  if(repaired.changed)saveState();
+
+  if(!identityReadyV75(s)){
+    s.tactic=null;
+    s.tacticNeedsRefresh=true;
+    saveState();
+    if(!silent)showMissingFieldPanelV78(n);
+    return;
+  }
+
+  const color=refereeColorCanonicalV77(s?.match?.refereeColor);
+  if(!color){
+    if(!silent)showMissingFieldPanelV78(n);
+    return;
+  }
+  s.match.refereeColor=color;
+  s.match.refereeStrictness=refereeStrictnessCanonicalV77(s.match.refereeStrictness,color);
+
+  if(!localStorage.getItem(API_KEY_STORAGE)){
+    apiModal('Salve sua chave Gemini para gerar táticas.');
+    return;
+  }
+
+  if(!silent)toast(`Gerando tática do Slot ${n}…`);
+
+  try{
+    const raw=await geminiJson([{text:tacticPromptV58(s)}],{
+      temperature:.10,
+      maxOutputTokens:2400
+    });
+
+    const prev=structuredClone(s.tactic||null);
+    s.tactic=validateTacticV58(raw,s,'Gemini');
+    s.tactic.previous=prev;
+    s.tactic.changedFromPrevious=!!prev &&
+      tacticSignatureV71({tactic:prev})!==tacticSignatureV71({tactic:s.tactic});
+
+    s.tacticFreshAt=nowIso();
+    s.tacticNeedsRefresh=false;
+    attachTacticToUpcomingSchedule(s);
+    s.updatedAt=nowIso();
+    saveState();
+
+    if(!silent)tacticModal(n);
+    return s.tactic;
+
+  }catch(e){
+    console.error(e);
+
+    if(/confirmar qual lado|identidade/i.test(String(e.message||e))){
+      if(!silent)showMissingFieldPanelV78(n);
+      return;
+    }
+
+    const prev=structuredClone(s.tactic||null);
+    s.tactic=fallbackTacticV58(s);
+    s.tactic.previous=prev;
+    s.tactic.identityVerified=true;
+    s.tactic.changedFromPrevious=!!prev &&
+      tacticSignatureV71({tactic:prev})!==tacticSignatureV71({tactic:s.tactic});
+    s.tacticFreshAt=nowIso();
+    s.tacticNeedsRefresh=false;
+    attachTacticToUpcomingSchedule(s);
+    saveState();
+
+    if(!silent)tacticModal(n);
+    return s.tactic;
+  }
+}
+
+async function refreshTacticFromSavedDataV59(n){
+  const s=state.slots[n-1];
+  if(!s||s.status!=='active')return;
+
+  const missing=missingTacticFieldsV78(s);
+  if(missing.length){
+    showMissingFieldPanelV78(n);
+    return;
+  }
+
+  const repair=repairStoredIdentityV75(s);
+  if(repair.changed){
+    saveState();
+    renderToday();
+    toast('Corrigi a inversão antiga entre seu time e o rival.');
+  }
+
+  if(!identityReadyV75(s)){
+    showMissingFieldPanelV78(n);
+    return;
+  }
+
+  const hasOpponent=!!(
+    s.opponent?.teamName &&
+    s.opponent?.overall!=null &&
+    s.opponent?.formation
+  );
+  if(!hasOpponent){
+    showMissingFieldPanelV78(n);
+    return;
+  }
+
+  // Tática antiga sem identidade validada não é reaproveitada.
+  if(s.tactic && (!s.tactic.identityVerified || /v7\.3|v5\.8/.test(String(s.tactic.engine||'')))){
+    s.tactic=null;
+    s.tacticFreshAt=null;
+    s.tacticNeedsRefresh=true;
+    saveState();
+  }
+
+  return generateTacticForSlot(n,false);
+}
+
+function persistentTacticHtml(s){
+  if(!s||s.status!=='active')return '';
+
+  // Primeiro: jogo passado que precisa de resultado.
+  const late=latestPendingResultRow(s);
+  if(late){
+    return `<div class="card tactic-persistent overdue">
+      <span class="eyebrow">RESULTADO PENDENTE</span>
+      <h3>${esc(s.teamName)} × ${esc(late.opponent)}</h3>
+      <p class="danger-text small">${esc(fmtDateTime(late.dateTime))}</p>
+      <button class="btn danger" onclick="openResultVideoV70(${s.slotNumber},${late._i})">Enviar vídeo do resultado</button>
+    </div>`;
+  }
+
+  const next=nextFutureRow(s);
+  if(!next)return '';
+
+  if(next.competitionType==='cup'&&next.hasOpponent===false){
+    return `<div class="card tactic-persistent">
+      <span class="eyebrow">PRÓXIMO COMPROMISSO</span>
+      <h3>Taça · adversário a definir</h3>
+      <p class="muted">${esc(calendarDateLabelV67(next,s))}</p>
+    </div>`;
+  }
+
+  if(!hasCurrentOpponentAnalysisV70(s)){
+    return `<div class="card tactic-persistent">
+      <span class="eyebrow">PRÓXIMO ADVERSÁRIO</span>
+      <h3>${esc(next.opponent||'A definir')}</h3>
+      <p class="muted">${esc(calendarDateLabelV67(next,s))} · ainda sem análise do rival</p>
+      <button class="btn" onclick="openTacticVideoRefreshV59(${s.slotNumber})">Analisar adversário</button>
+    </div>`;
+  }
+
+  const missing=missingTacticFieldsV78(s);
+  if(missing.length){
+    return `<div class="card tactic-persistent">
+      <span class="eyebrow">DADOS PENDENTES</span>
+      <h3>${esc(s.opponent?.teamName||next.opponent||'Próximo adversário')}</h3>
+      ${missingDataInlineHtmlV78(s)}
+    </div>`;
+  }
+
+  if(s.tactic){
+    return `<div class="card tactic-persistent">
+      <span class="eyebrow">TÁTICA ATUAL · SLOT ${s.slotNumber}</span>
+      <h3>${esc(s.teamName)} × ${esc(s.opponent.teamName)}</h3>
+      ${tacticRegimeBadgeV73(s)}
+      ${refereeAuditHtmlV77(s)}
+      ${tacticVisualHtmlV60(s.tactic)}
+      <p class="small muted">${esc(s.tactic.reason||'')}</p>
+      <div class="actions">
+        <button class="btn" onclick="refreshTacticFromSavedDataV59(${s.slotNumber})">Recalcular</button>
+        <button class="btn secondary" onclick="openTacticVideoRefreshV59(${s.slotNumber})">Vídeo novo</button>
+      </div>
+    </div>`;
+  }
+
+  return `<div class="card tactic-persistent">
+    <span class="eyebrow">RIVAL ANALISADO</span>
+    <h3>${esc(s.opponent.teamName)}</h3>
+    ${tacticRegimeBadgeV73(s)}
+    ${refereeAuditHtmlV77(s)}
+    <button class="btn" onclick="generateTacticForSlot(${s.slotNumber})">Gerar tática</button>
+  </div>`;
+}
+
+// Se o erro antigo ficou salvo no banner global, limpa apenas o stack overflow ao carregar o hotfix.
+setTimeout(()=>{
+  try{
+    if(activeAnalysisJobV54?.status==='error' && /Maximum call stack size exceeded/i.test(String(activeAnalysisJobV54.text||''))){
+      activeAnalysisJobV54=null;
+      renderGlobalJobV54();
+    }
+    renderAll();
+  }catch(e){
+    console.error(e);
+  }
+},250);
