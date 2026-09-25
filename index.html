@@ -7,7 +7,7 @@
   <meta name="description" content="OSM AI Coach Pro V2 — central inteligente para 4 slots, análise, tática, mercado e aprendizado.">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="styles.css?v=2.0.6">
+  <link rel="stylesheet" href="styles.css?v=2.2.0">
   <title>OSM AI Coach Pro V2</title>
 </head>
 <body>
@@ -29,6 +29,7 @@
     <button class="nav-btn active" data-view="dashboard">Hoje</button>
     <button class="nav-btn" data-view="pregame">Pré-jogo</button>
     <button class="nav-btn" data-view="analyze">Analisar</button>
+    <button class="nav-btn" data-view="info">Informações</button>
     <button class="nav-btn" data-view="market">Diretor</button>
     <button class="nav-btn" data-view="learning">Aprendizado</button>
     <button class="nav-btn" data-view="history">Histórico</button>
@@ -66,7 +67,7 @@
 
       <div class="mode-grid">
         <button class="mode-card active" data-mode="tactic"><b>⚽ Partida</b><span>Adversário, árbitro, Data Analyst e tática</span></button>
-        <button class="mode-card" data-mode="market"><b>👥 Mercado</b><span>Elenco, treino e transferências</span></button>
+        <button class="mode-card" data-mode="market"><b>👥 Elenco</b><span>Jogadores, posições, força, treino e evolução</span></button>
         <button class="mode-card" data-mode="result"><b>📊 Resultado</b><span>Placar, estatísticas e aprendizado</span></button>
         <button class="mode-card" data-mode="calendar"><b>📅 Calendário</b><span>Rodadas, horários e próximos jogos</span></button>
       </div>
@@ -102,9 +103,18 @@
       <div id="analysisContent"></div>
     </section>
 
+
+    <section id="view-info" class="view">
+      <div class="section-head">
+        <div><span class="eyebrow">INFORMAÇÕES DO SLOT</span><h2>Liga, time e calendário</h2></div>
+        <button id="infoEditBtn" class="btn ghost">Editar informações</button>
+      </div>
+      <div id="infoContent"></div>
+    </section>
+
     <section id="view-market" class="view">
       <div class="section-head">
-        <div><span class="eyebrow">DIRETOR ESPORTIVO IA</span><h2>Elenco, mercado e evolução</h2></div>
+        <div><span class="eyebrow">DIRETOR ESPORTIVO IA</span><h2>Elenco, evolução e plano</h2></div>
         <button id="marketAnalyzeBtn" class="btn ghost">Recalcular plano</button>
       </div>
       <div id="marketContent"></div>
@@ -126,14 +136,14 @@
         <label>Seu nick no OSM<input id="userNick" value="leandrozzy"></label>
         <label>Modelo Gemini
           <select id="modelSelect">
-            <option value="gemini-3.8-flash">Gemini 3.8 Flash</option>
-            <option value="gemini-3.7-flash">Gemini 3.7 Flash</option>
-            <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
             <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
+            <option value="gemini-flash-latest">Gemini Flash Latest</option>
+            <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash Lite</option>
+            <option value="gemini-3.8-flash">Gemini 3.8 Flash</option>
           </select>
         </label>
         <label>Alerta antes da partida (min)<input id="notifyMinutes" type="number" min="1" max="180" value="20"></label>
-        <label class="check"><input id="notifyEnabled" type="checkbox" checked><span>Notificações enquanto o app estiver aberto/instalado</span></label><div class="small muted">Leitura de partida: OCR local + Gemini 3.8 Flash.</div>
+        <label class="check"><input id="notifyEnabled" type="checkbox" checked><span>Notificações enquanto o app estiver aberto/instalado</span></label><div class="small muted">Leitura: motor da V1 + OCR local + Gemini 3.5 Flash como primeira tentativa.</div>
         <div class="actions">
           <button id="saveSettingsBtn" class="btn">Salvar</button>
           <button id="notifyBtn" class="btn ghost">Permitir notificações</button>
@@ -161,6 +171,6 @@
   <div id="toast" class="toast"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script src="app.js?v=2.0.6"></script>
+  <script src="app.js?v=2.2.0"></script>
 </body>
 </html>

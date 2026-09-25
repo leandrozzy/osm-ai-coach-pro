@@ -104,3 +104,35 @@ body{padding-bottom:max(28px,env(safe-area-inset-bottom))}
   }
   #view-analyze{padding-bottom:40px!important}
 }
+
+
+/* V2.2.0 - Informações, evolução e explicação da tática */
+.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.compact-head{margin:0 0 10px}
+.why-grid{display:grid;grid-template-columns:1fr;gap:8px;margin:12px 0}
+.confidence-explain{margin-top:14px}
+.confidence-explain h3{font-size:16px;margin:0 0 8px}
+.confidence-factor{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px;border-radius:11px;border:1px solid #203f5a;background:#091827;margin-top:7px}
+.confidence-factor div{display:flex;flex-direction:column;gap:3px}
+.confidence-factor span{font-size:10px;color:var(--muted)}
+.confidence-factor strong{font-size:14px;white-space:nowrap}
+.confidence-factor.good strong{color:var(--ok)}
+.confidence-factor.warn strong{color:var(--warn)}
+.projection-card{display:grid;grid-template-columns:1fr auto;gap:7px 12px;padding:12px;border-radius:12px;background:#091827;border:1px solid #1d3a55;margin:10px 0}
+.projection-card span{font-size:10px;color:var(--muted);text-transform:uppercase}
+.projection-card b{text-align:right}
+.upgrade-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.upgrade-card{padding:11px;border-radius:11px;border:1px solid #1d3b56;background:#091827}
+.upgrade-card>div{display:flex;justify-content:space-between;gap:10px}
+.upgrade-card span{font-size:10px;color:var(--muted);display:block;margin-top:3px}
+.upgrade-card strong{display:block;color:var(--ok);margin-top:7px}
+.upgrade-card p{font-size:10px;color:var(--muted);margin:6px 0 0}
+.simple-list{display:grid;gap:7px}
+.simple-list>div{display:flex;justify-content:space-between;gap:10px;padding:9px 10px;border-radius:10px;background:#091827;border:1px solid #193650}
+.simple-list span{font-size:10px;color:var(--muted)}
+.calendar-wrap{overflow:auto}
+.calendar-table{min-width:650px}
+.next-match-note{margin-top:10px;padding:10px;border-radius:10px;background:#0b2630;border:1px solid #21534b;font-size:11px}
+@media(max-width:820px){
+  .info-grid,.upgrade-grid{grid-template-columns:1fr}
+}

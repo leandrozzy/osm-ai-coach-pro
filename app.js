@@ -1,6 +1,6 @@
 'use strict';
 
-const V2_VERSION = '2.1.1';
+const V2_VERSION = '2.2.0';
 const STATE_KEY = 'osm_ai_coach_pro_v2_state';
 const SETTINGS_KEY = 'osm_ai_coach_pro_v2_settings';
 const API_KEY_STORAGE = 'osm_ai_coach_pro_gemini_key';
@@ -120,6 +120,7 @@ function showView(name){
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   $('view-'+name)?.classList.add('active');
   if(name==='pregame') renderPregame();
+  if(name==='info') renderInfo();
   if(name==='market') renderMarket();
   if(name==='learning') renderLearning();
   if(name==='history') renderHistory();
@@ -135,13 +136,26 @@ function strengthBucket(s){
   const d=strengthDiff(s); if(d===null)return 'NI'; if(d>=20)return 'muito_mais_forte';if(d>=8)return 'mais_forte';if(d>-8)return 'equilibrado';if(d>-20)return 'mais_fraco';return 'muito_mais_fraco';
 }
 function calcQuality(s){
-  const paths=FIELD_DEFS.map(x=>x[0]); let score=0,weight=0;
+  // "Qualidade da leitura" na V2 significa COBERTURA dos dados.
+  // Campo preenchido manualmente vale tanto quanto detectado: se todos os
+  // campos monitorados estão confirmados, a cobertura deve chegar a 100%.
+  const paths=FIELD_DEFS.map(x=>x[0]);
+  let filled=0;
   for(const p of paths){
-    const important=REQUIRED_TACTIC.includes(p)?2:1; weight+=important;
-    const v=getPath(s,p),m=s.fieldMeta[p]||{};
-    if(hasValue(v) || typeof v==='boolean') score += important * Math.max(.35,Number(m.confidence)||0);
+    const v=getPath(s,p);
+    if(hasValue(v) || typeof v==='boolean') filled++;
   }
-  s.analysisQuality=Math.round(score/weight*100); return s.analysisQuality;
+  s.analysisQuality=paths.length ? Math.round((filled/paths.length)*100) : 0;
+
+  // Confiança média da detecção fica separada e não reduz a cobertura.
+  const detected=paths
+    .map(p=>s.fieldMeta?.[p])
+    .filter(m=>m && m.source==='detected' && Number.isFinite(Number(m.confidence)));
+  s.detectionConfidence=detected.length
+    ? Math.round(detected.reduce((a,m)=>a+Number(m.confidence||0),0)/detected.length*100)
+    : null;
+
+  return s.analysisQuality;
 }
 function missingRequired(s){ return REQUIRED_TACTIC.filter(p=>{const v=getPath(s,p);return !(hasValue(v)||typeof v==='boolean')}); }
 
@@ -187,7 +201,7 @@ function renderRadar(){
     if(miss.length) rows.push([`Slot ${s.slotNumber}: completar leitura`,`${miss.length} campo(s) essencial(is)`,'danger']);
     else if(!s.tactic) rows.push([`Slot ${s.slotNumber}: gerar tática`,'Dados essenciais prontos','warn']);
     if(s.tactic && shouldRefresh(s)) rows.push([`Slot ${s.slotNumber}: revalidar adversário`,'Jogo próximo; confirme se ele mudou','warn']);
-    if(s.marketPlan?.actions?.length) rows.push([`Slot ${s.slotNumber}: mercado`,s.marketPlan.actions[0],'']);
+    if(s.marketPlan?.actions?.length) rows.push([`Slot ${s.slotNumber}: evolução do elenco`,s.marketPlan.actions[0],'']);
   }
   $('radarPanel').innerHTML=`<div class="section-head"><div><span class="eyebrow">RADAR</span><h2>Próximas ações</h2></div></div><div class="card radar-list">${rows.length?rows.map(r=>`<div class="radar-item"><div><b>${esc(r[0])}</b><span>${esc(r[1])}</span></div><span class="status ${r[2]}">${r[2]==='danger'?'Urgente':r[2]==='warn'?'Atenção':'Ação'}</span></div>`).join(''):'<p class="muted">Nada urgente agora.</p>'}</div>`;
 }
@@ -232,7 +246,7 @@ function renderPregame(){
     </div>
     <div class="audit-card">
       <div class="audit-top"><div><span class="eyebrow">QUALIDADE DA LEITURA</span><h3>${missing.length?'Revisão necessária':'Dados suficientes'}</h3></div><div class="quality"><div class="quality-score">${s.analysisQuality}%</div></div></div>
-      <p class="small muted">${missing.length?`${missing.length} campo(s) essencial(is) sem confirmação.`:'Os campos essenciais estão presentes. NI continua NI quando desconhecido.'}</p>
+      <p class="small muted">${missing.length?`${missing.length} campo(s) essencial(is) sem confirmação.`:`Cobertura dos dados: ${s.analysisQuality}%. ${s.detectionConfidence!==null?`Confiança média da leitura automática: ${s.detectionConfidence}%. `:''}Campos corrigidos manualmente contam como confirmados.`}</p>
       <div class="actions">${missing.length?`<button class="btn" onclick="editAllFields(${s.slotNumber},true)">Resolver campos ausentes</button>`:''}</div>
     </div>
   </div>
@@ -274,6 +288,80 @@ function fieldAuditHtml(s){
     </details>
   </div>`;
 }
+
+function tacticConfidenceBreakdown(s,t){
+  const coverage=calcQuality(s);
+  const candidates=Math.max(1,(s.tacticCandidates||[]).length);
+  const hist=similarHistory(s,t);
+  const unknownCritical=missingRequired(s).length;
+  const factors=[];
+
+  factors.push({
+    label:'Cobertura dos dados',
+    value:`${coverage}%`,
+    good:coverage>=90,
+    detail:coverage===100?'Todos os campos monitorados estão confirmados.':`${100-coverage}% dos campos monitorados ainda não foram confirmados.`
+  });
+
+  factors.push({
+    label:'Candidatos válidos',
+    value:String(candidates),
+    good:candidates>=3,
+    detail:`O motor comparou ${candidates} combinação(ões) tática(s) válida(s) antes de escolher esta.`
+  });
+
+  factors.push({
+    label:'Histórico semelhante',
+    value:hist.count?`${hist.count} jogo(s)`:'Sem amostra',
+    good:hist.count>=2,
+    detail:hist.count>=2?'Há resultados anteriores com contexto/formação semelhante ajudando a decisão.':'O histórico ainda é pequeno; a confiança depende mais dos dados atuais.'
+  });
+
+  if(unknownCritical){
+    factors.push({label:'Campos essenciais ausentes',value:String(unknownCritical),good:false,detail:'Campos essenciais ausentes reduzem a segurança da recomendação.'});
+  }
+
+  return factors;
+}
+function tacticWhyHtml(s,t){
+  const d=strengthDiff(s);
+  const bucket=strengthBucket(s);
+  const conf=Math.round((t.confidenceScore||.72)*100);
+  const factors=tacticConfidenceBreakdown(s,t);
+
+  const formationWhy = d!==null && d<=-12
+    ? `A formação ${t.formation} foi escolhida para proteger melhor a equipe porque sua força está ${Math.abs(d)} ponto(s) abaixo da rival.`
+    : d!==null && d>=18
+      ? `A formação ${t.formation} aproveita sua vantagem de ${d} ponto(s) de força sem abandonar equilíbrio defensivo.`
+      : `A formação ${t.formation} foi escolhida para um confronto ${bucket==='equilibrado'?'equilibrado':'de diferença moderada de força'}, buscando equilíbrio entre criação e proteção.`;
+
+  const planWhy = s.opponent.formation || s.opponent.style
+    ? `O plano ${t.gamePlan} considera o rival em ${s.opponent.formation||'formação NI'} e ${s.opponent.style||'plano NI'}.`
+    : `O plano ${t.gamePlan} foi escolhido com base na força relativa e no local da partida.`;
+
+  const slidersWhy = `Pressão ${t.pressure}, mentalidade ${t.mentality} e ritmo ${t.tempo} trabalham juntos: a pressão define onde recuperar a bola, a mentalidade regula o risco e o ritmo controla a velocidade das ações.`;
+
+  const ref=String(s.match.refereeColor||'').toLowerCase();
+  const refWhy = ref
+    ? `Com árbitro ${s.match.refereeColor}, o desarme ${t.tackling} reduz o risco disciplinar sem abrir mão da disputa.`
+    : `Como o árbitro não foi confirmado, o desarme ${t.tackling} é uma escolha conservadora.`;
+
+  const advancedWhy = `Por setor: ataque "${t.attackInstruction}", meio "${t.midfieldInstruction}" e defesa "${t.defenceInstruction}" foram combinados para sustentar o desenho da formação e o plano de jogo.`;
+
+  return `<div class="why-grid">
+    <div class="reason-box"><b>Por que esta formação?</b><br>${esc(formationWhy)}</div>
+    <div class="reason-box"><b>Por que este estilo?</b><br>${esc(planWhy)}</div>
+    <div class="reason-box"><b>Por que estes sliders?</b><br>${esc(slidersWhy)}</div>
+    <div class="reason-box"><b>Árbitro e desarme</b><br>${esc(refWhy)}</div>
+    <div class="reason-box"><b>Táticas por setor</b><br>${esc(advancedWhy)}</div>
+  </div>
+  <div class="confidence-explain">
+    <h3>Por que a confiança ficou em ${conf}%?</h3>
+    ${factors.map(f=>`<div class="confidence-factor ${f.good?'good':'warn'}"><div><b>${esc(f.label)}</b><span>${esc(f.detail)}</span></div><strong>${esc(f.value)}</strong></div>`).join('')}
+    <p class="small muted">Confiança não é probabilidade de vitória. É o quanto os dados disponíveis e o histórico sustentam esta recomendação.</p>
+  </div>`;
+}
+
 function tacticHtml(s){
   if(!s.tactic) return `<div class="card" style="margin-top:12px"><div class="tactic-head"><div><span class="eyebrow">RECOMENDAÇÃO</span><h3>Tática ainda não gerada</h3></div></div><p class="muted small">A V2 gera vários candidatos internamente, elimina incoerências e mostra apenas o final.</p><div class="actions"><button class="btn" onclick="generateTactic(${s.slotNumber})">Gerar tática</button></div></div>`;
   const t=s.tactic, conf=Math.round((t.confidenceScore||.72)*100);
@@ -281,7 +369,7 @@ function tacticHtml(s){
   return `<div class="card" style="margin-top:12px"><div class="tactic-head"><div><span class="eyebrow">TÁTICA FINAL</span><h3>${esc(t.formation)} · ${esc(t.gamePlan)}</h3></div><span class="status ok">Recomendação</span></div>
   <table class="tactic-table">${rows.map(([a,b])=>`<tr><td>${esc(a)}</td><td>${esc(b)}</td></tr>`).join('')}</table>
   <div class="confidence-bar"><div class="small muted">Confiança da recomendação: ${conf}%</div><div class="confidence-track"><span style="width:${conf}%"></span></div></div>
-  <div class="reason-box">${esc(t.reason||'Tática validada pelo motor V2.')}</div>
+  <div class="reason-box"><b>Resumo da decisão</b><br>${esc(t.reason||'Tática validada pelo motor V2.')}</div>
   <div class="actions"><button class="btn" onclick="generateTactic(${s.slotNumber})">Recalcular</button><button class="btn ghost" onclick="copyTactic(${s.slotNumber})">Copiar configuração</button><button class="btn ghost" onclick="whyTactic(${s.slotNumber})">Por que esta tática?</button><button class="btn ghost" onclick="resultModal(${s.slotNumber})">Registrar resultado</button></div></div>`;
 }
 
@@ -684,18 +772,67 @@ window.copyTactic=async function(n){
   const t=state.slots[n-1].tactic;if(!t)return;const text=`${t.formation}\n${t.gamePlan}\nPressão ${t.pressure}\nEstilo ${t.mentality}\nRitmo ${t.tempo}\n${t.marking}\nImpedimento ${t.offside}\nDesarme ${t.tackling}\nATA ${t.attackInstruction}\nMEI ${t.midfieldInstruction}\nDEF ${t.defenceInstruction}`;
   try{await navigator.clipboard.writeText(text);toast('Tática copiada')}catch{openModal(`<h2>Configuração</h2><pre>${esc(text)}</pre>`)}
 };
-window.whyTactic=function(n){const t=state.slots[n-1].tactic;if(!t)return;openModal(`<h2>Por que esta tática?</h2><div class="reason-box">${esc(t.reason)}</div><p class="small muted">Foram avaliados ${state.slots[n-1].tacticCandidates.length} candidato(s) válidos. A V2 rejeita combinações incoerentes antes de mostrar a recomendação.</p>`)};
+window.whyTactic=function(n){
+  const s=state.slots[n-1],t=s?.tactic;
+  if(!t)return;
+  openModal(`<h2>Por que esta tática?</h2>${tacticWhyHtml(s,t)}`);
+};
 
 function renderMarket(){
-  const s=selectedSlot();if(!s||s.status!=='active'){$('marketContent').innerHTML='<div class="card"><p class="muted">Configure o slot primeiro.</p></div>';return}
+  const s=selectedSlot();
+  if(!s||s.status!=='active'){
+    $('marketContent').innerHTML='<div class="card"><p class="muted">Configure o slot primeiro.</p></div>';
+    return;
+  }
+
   const counts=countPositions(s.roster),health={};
-  for(const [p,target] of Object.entries(POS_TARGET)){const n=counts[p]||0;health[p]={n,target,status:n===target?'good':n<target?'bad':'warn'}}
-  // sempre recalcula para refletir a normalização atual das posições
+  for(const [p,target] of Object.entries(POS_TARGET)){
+    const n=counts[p]||0;
+    health[p]={n,target,status:n===target?'good':n<target?'bad':'warn'};
+  }
+
   const plan=buildMarketPlan(s);
-  $('marketContent').innerHTML=`<div class="market-columns"><div class="card"><h3>Saúde do elenco</h3><div class="position-health">${Object.entries(health).map(([p,h])=>`<div class="health ${h.status}"><span>${p}</span><b>${h.n}/${h.target}</b></div>`).join('')}</div><p class="small muted">Regra configurada: 4 ATA · 6 MEI · 6 DEF · 2 GOL. Máximo de 4 jogadores simultaneamente à venda.</p></div>
-  <div class="card"><h3>Plano ativo</h3>${plan.actions.length?`<div class="radar-list">${plan.actions.map(a=>`<div class="radar-item"><b>${esc(a)}</b></div>`).join('')}</div>`:'<p class="muted">Envie vídeo do elenco/mercado para gerar recomendações específicas.</p>'}<div class="actions"><button class="btn" onclick="showView('analyze');setAnalysisMode('market')">Ler mercado</button></div></div></div>
-  <div class="card" style="margin-top:12px"><h3>Elenco reconhecido</h3>${s.roster.length?rosterTable(s.roster):'<p class="muted">Nenhum jogador reconhecido ainda.</p>'}</div>
-  <div class="card" style="margin-top:12px"><h3>Mercado atual</h3>${s.market.length?rosterTable(s.market):'<p class="muted">Nenhuma opção de mercado reconhecida ainda.</p>'}</div>`;
+  const projection=plan.targetOverall!==null
+    ? `<div class="projection-card"><span>Força/base atual</span><b>${esc(plan.baselineOverall)}</b><span>Meta sugerida</span><b>${esc(plan.targetOverall)}</b><span>Horizonte estimado</span><b>${esc(plan.projectedRounds)} rodada(s)</b></div>`
+    : `<p class="muted small">A projeção aparecerá quando houver força geral ou elenco suficiente.</p>`;
+
+  const upgrades=(plan.upgrades||[]).map(u=>`
+    <div class="upgrade-card">
+      <div><b>${esc(u.position)}</b><span>Mais fraco atual: ${esc(u.weakest)} (${esc(u.weakestRating)})</span></div>
+      <strong>Buscar ${esc(u.targetRating)}+</strong>
+      <p>${esc(u.profile)}</p>
+    </div>`).join('');
+
+  const sells=(plan.sellCandidates||[]).length
+    ? `<div class="simple-list">${plan.sellCandidates.map(p=>`<div><b>${esc(p.name)}</b><span>${esc(p.position)} · força ${esc(p.rating)}</span></div>`).join('')}</div>`
+    : `<p class="muted small">Nenhuma venda obrigatória pela estrutura atual. Venda deve priorizar upgrade, não apenas reduzir elenco.</p>`;
+
+  $('marketContent').innerHTML=`
+  <div class="market-columns">
+    <div class="card">
+      <h3>Saúde do elenco</h3>
+      <div class="position-health">${Object.entries(health).map(([p,h])=>`<div class="health ${h.status}"><span>${p}</span><b>${h.n}/${h.target}</b></div>`).join('')}</div>
+      <p class="small muted">Meta: 4 ATA · 6 MEI · 6 DEF · 2 GOL. Máximo de 4 jogadores simultaneamente à venda.</p>
+    </div>
+
+    <div class="card">
+      <h3>Plano ativo</h3>
+      ${plan.actions.length?`<div class="radar-list">${plan.actions.map(a=>`<div class="radar-item"><b>${esc(a)}</b></div>`).join('')}</div>`:'<p class="muted">Sem ações pendentes.</p>'}
+      <div class="actions"><button class="btn" onclick="showView('analyze');setAnalysisMode('market')">Ler elenco</button></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:12px">
+    <div class="section-head compact-head"><div><span class="eyebrow">EVOLUÇÃO</span><h3>Plano de crescimento do time</h3></div></div>
+    ${projection}
+    <h4>Perfis de compra recomendados</h4>
+    <div class="upgrade-grid">${upgrades||'<p class="muted">Envie o vídeo completo do elenco para gerar os perfis.</p>'}</div>
+    <h4>Possíveis vendas</h4>
+    ${sells}
+    <p class="small muted">Não é necessário enviar a lista de transferências. O Diretor indica o perfil que você deve procurar quando a lista do OSM atualizar.</p>
+  </div>
+
+  <div class="card" style="margin-top:12px"><h3>Elenco reconhecido</h3>${s.roster.length?rosterTable(s.roster):'<p class="muted">Nenhum jogador reconhecido ainda.</p>'}</div>`;
 }
 function playerPosValue(p){
   if(!p||typeof p!=='object')return '';
@@ -739,7 +876,7 @@ function normalizePos(p){
      || s.includes('DEFENSOR') || s.includes('ZAGUEIRO') || s.includes('LATERAL') || s.includes('BACK')) return 'DEF';
 
   // Meio-campistas
-  if(['M','MF','MID','MC','ME','MD','MDC','MCD','MCE','MOC','MO','VOL','CM','CDM','CAM','LM','RM'].includes(s)
+  if(['M','MF','MID','MC','ME','MD','MDC','MCD','MCE','MCO','MOC','MO','VOL','CM','CDM','CAM','LM','RM'].includes(s)
      || s.includes('MEIA') || s.includes('MEIO') || s.includes('MIDFIELD') || s.includes('MEDIO') || s.includes('VOLANTE')) return 'MEI';
 
   // Atacantes / extremos
@@ -750,19 +887,79 @@ function normalizePos(p){
 }
 function buildMarketPlan(s){
   const roster=Array.isArray(s.roster)?s.roster:[];
-  const counts=countPositions(roster),actions=[];
-  for(const [p,target] of Object.entries(POS_TARGET)){
-    if((counts[p]||0)<target)actions.push(`Prioridade: contratar ${target-(counts[p]||0)} ${p}`);
-    else if((counts[p]||0)>target)actions.push(`Há ${(counts[p]||0)-target} ${p} acima da meta; avaliar venda`);
+  const counts=countPositions(roster);
+  const actions=[];
+  const upgrades=[];
+  const sellCandidates=[];
+
+  const byPos={ATA:[],MEI:[],DEF:[],GOL:[]};
+  for(const p of roster){
+    const pos=normalizePos(playerPosValue(p));
+    const rating=Number(playerRatingValue(p));
+    if(byPos[pos] && Number.isFinite(rating)) byPos[pos].push({...p,_rating:rating,_pos:pos});
   }
+  for(const arr of Object.values(byPos)) arr.sort((a,b)=>b._rating-a._rating);
+
+  for(const [p,target] of Object.entries(POS_TARGET)){
+    const n=counts[p]||0;
+    if(n<target) actions.push(`Completar estrutura: falta(m) ${target-n} ${p}.`);
+    else if(n>target) actions.push(`${p}: há ${n-target} jogador(es) acima da meta; avaliar venda do(s) mais fraco(s).`);
+
+    const arr=byPos[p]||[];
+    if(arr.length){
+      const weakest=arr[arr.length-1];
+      const strongest=arr[0];
+      const desired=Math.max((weakest._rating||0)+8, Math.round((strongest._rating||0)*.9));
+      upgrades.push({
+        position:p,
+        weakest:playerNameValue(weakest)||'NI',
+        weakestRating:weakest._rating,
+        targetRating:desired,
+        profile:`${p} com força ${desired}+; priorizar idade menor e boa relação preço/força`
+      });
+    }
+  }
+
   const selling=roster.filter(p=>p?.forSale===true).length;
-  if(selling>4)actions.unshift(`Reduzir lista de vendas: ${selling} jogadores marcados; limite desejado é 4`);
-  const classified=Object.values(counts).reduce((a,b)=>a+b,0);
+  if(selling>4) actions.unshift(`Há ${selling} jogadores marcados para venda; mantenha no máximo 4 simultaneamente.`);
+
+  // Suggested sell candidates: lowest-rated non-training players, respecting minimum structure.
+  for(const [p,target] of Object.entries(POS_TARGET)){
+    const arr=(byPos[p]||[]).filter(x=>x.training!==true);
+    const excess=Math.max(0,arr.length-target);
+    for(let i=0;i<excess;i++){
+      const cand=arr[arr.length-1-i];
+      if(cand) sellCandidates.push({name:playerNameValue(cand),position:p,rating:cand._rating});
+    }
+  }
+
+  const allRatings=roster.map(playerRatingValue).map(Number).filter(Number.isFinite);
+  const currentAvg=allRatings.length?Math.round(allRatings.reduce((a,b)=>a+b,0)/allRatings.length):null;
+  const overall=Number(s.myTeam?.overall);
+  const baseline=Number.isFinite(overall)?overall:currentAvg;
+  const targetOverall=Number.isFinite(baseline)?Math.max(baseline+8,Math.round(baseline*1.1)):null;
+  const projectedRounds=targetOverall&&baseline?Math.max(2,Math.ceil((targetOverall-baseline)/2)):null;
+
+  if(!actions.length) actions.push('Estrutura por posição está completa. O foco passa a ser substituir os jogadores mais fracos por upgrades de força.');
+
   const unknownPositions=[...new Set(roster.map(p=>String(playerPosValue(p)||'').trim()).filter(pos=>pos && !['ATA','MEI','DEF','GOL'].includes(normalizePos(pos))))];
+  const classified=Object.values(counts).reduce((a,b)=>a+b,0);
   const unclassified=Math.max(0,roster.length-classified);
-  if(unclassified)actions.unshift(`${unclassified} jogador(es) sem posição reconhecida${unknownPositions.length?`: ${unknownPositions.join(', ')}`:''}`);
-  if(!actions.length)actions.push('Distribuição por posição está no alvo; priorize upgrade de força sem quebrar a estrutura');
-  s.marketPlan={generatedAt:nowIso(),actions,counts,unclassified};return s.marketPlan;
+  if(unclassified) actions.unshift(`${unclassified} jogador(es) sem posição reconhecida${unknownPositions.length?`: ${unknownPositions.join(', ')}`:''}.`);
+
+  s.marketPlan={
+    generatedAt:nowIso(),
+    actions,
+    counts,
+    unclassified,
+    upgrades,
+    sellCandidates:sellCandidates.slice(0,4),
+    currentAvg,
+    baselineOverall:Number.isFinite(baseline)?baseline:null,
+    targetOverall,
+    projectedRounds
+  };
+  return s.marketPlan;
 }
 function rosterTable(rows){return `<div style="overflow:auto"><table class="simple-table"><thead><tr><th>Jogador</th><th>Pos.</th><th>Força</th><th>Idade</th><th>Valor/Preço</th><th>Status</th></tr></thead><tbody>${(Array.isArray(rows)?rows:[]).map(p=>`<tr><td>${esc(playerNameValue(p)||'NI')}</td><td>${esc(playerPosValue(p)||'NI')}</td><td>${esc(playerRatingValue(p))}</td><td>${esc(playerAgeValue(p))}</td><td>${esc(playerMoneyValue(p))}</td><td>${p.training===true?'Treino':p.forSale===true?'Venda':'—'}</td></tr>`).join('')}</tbody></table></div>`}
 
@@ -904,6 +1101,122 @@ RETORNE JSON:
     setTimeout(()=>$('progressWrap').classList.add('hidden'),1000);
   }
 }
+
+
+function renderInfo(){
+  const s=selectedSlot();
+  if(!s){
+    $('infoContent').innerHTML='<div class="card"><p class="muted">Nenhum slot selecionado.</p></div>';
+    return;
+  }
+
+  const cal=Array.isArray(s.schedule)?s.schedule:[];
+  const next=cal.filter(x=>!x.played&&!x.skipped).slice().sort((a,b)=>new Date(a.dateTime||'9999')-new Date(b.dateTime||'9999'))[0];
+
+  $('infoContent').innerHTML=`
+    <div class="info-grid">
+      <div class="card">
+        <span class="eyebrow">COMPETIÇÃO</span>
+        <h3>${esc(s.competitionName||'Competição NI')}</h3>
+        <div class="context-grid">
+          ${ctx('Meu time',s.teamName)}
+          ${ctx('Tipo',s.competitionType)}
+          ${ctx('Rodada',s.round!==null&&s.round!==undefined?`${s.round}${s.totalRounds?`/${s.totalRounds}`:''}`:'NI')}
+          ${ctx('Estádio',s.myTeam?.stadium)}
+          ${ctx('Bônus login',hasValue(s.myTeam?.loginBonus)?`${s.myTeam.loginBonus}%`:'NI')}
+          ${ctx('Próximo jogo',s.match?.nextMatchAt?fmtDate(s.match.nextMatchAt):'NI')}
+        </div>
+      </div>
+
+      <div class="card">
+        <span class="eyebrow">PRÓXIMO ADVERSÁRIO</span>
+        <h3>${esc(s.opponent?.teamName||'NI')}</h3>
+        <div class="context-grid">
+          ${ctx('Local',s.match?.venue)}
+          ${ctx('Árbitro',s.match?.refereeColor||s.match?.refereeName)}
+          ${ctx('Força',s.opponent?.overall)}
+          ${ctx('Humano',boolLabel(s.opponent?.human))}
+          ${ctx('Estádio rival',s.opponent?.stadium)}
+          ${ctx('Bônus rival',hasValue(s.opponent?.loginBonus)?`${s.opponent.loginBonus}%`:'NI')}
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <div class="section-head compact-head">
+        <div><span class="eyebrow">CALENDÁRIO</span><h3>Partidas reconhecidas</h3></div>
+        <button class="btn ghost tiny" onclick="showView('analyze');setAnalysisMode('calendar')">Ler calendário</button>
+      </div>
+      ${cal.length?calendarTableHtml(cal):'<p class="muted">Nenhum calendário analisado ainda.</p>'}
+      ${next?`<div class="next-match-note"><b>Próxima partida:</b> ${esc(next.opponent||'NI')} · ${esc(next.venue||'NI')} · ${esc(next.dateTime?fmtDate(next.dateTime):(next.dateText||'Data NI'))}</div>`:''}
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <span class="eyebrow">STATUS DO SLOT</span>
+      <h3>Dados e histórico</h3>
+      <div class="kpis">
+        <div class="kpi"><span>Cobertura</span><b>${calcQuality(s)}%</b></div>
+        <div class="kpi"><span>Resultados</span><b>${(s.results||[]).length}</b></div>
+        <div class="kpi"><span>Jogadores</span><b>${(s.roster||[]).length||'NI'}</b></div>
+        <div class="kpi"><span>Última leitura</span><b>${s.lastAnalysisAt?fmtDate(s.lastAnalysisAt):'NI'}</b></div>
+      </div>
+    </div>`;
+}
+function calendarTableHtml(rows){
+  return `<div class="calendar-wrap"><table class="simple-table calendar-table">
+    <thead><tr><th>Rod.</th><th>Tipo</th><th>Local</th><th>Adversário</th><th>Data/hora</th><th>Status</th></tr></thead>
+    <tbody>${rows.map(x=>`<tr>
+      <td>${esc(x.round)}</td>
+      <td>${x.competitionType==='cup'?'🏆 Taça':'Liga'}</td>
+      <td>${esc(x.venue)}</td>
+      <td>${esc(x.opponent)}</td>
+      <td>${esc(x.dateTime?fmtDate(x.dateTime):`${x.dateText||'NI'} ${x.timeText||''}`)}</td>
+      <td>${x.played?`Jogado ${esc(x.result||x.outcome||'')}`:x.skipped?'Ignorado':x.conditional?'Condicional':'Futuro'}</td>
+    </tr>`).join('')}</tbody>
+  </table></div>`;
+}
+window.infoEditModal=function(){
+  const s=selectedSlot();
+  const localDate=s.match?.nextMatchAt
+    ? new Date(new Date(s.match.nextMatchAt).getTime()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16)
+    : '';
+  openModal(`<h2>Editar informações · Slot ${s.slotNumber}</h2>
+    <div class="field-edit">
+      <label>Meu time<input id="iTeam" value="${esc(s.teamName||'')}"></label>
+      <label>Competição<input id="iComp" value="${esc(s.competitionName||'')}"></label>
+      <label>Tipo
+        <select id="iType"><option>Liga normal</option><option>Batalha</option><option>Copa</option><option>Torneio</option></select>
+      </label>
+      <div class="kpis">
+        <label>Rodada<input id="iRound" type="number" value="${esc(s.round??'')}"></label>
+        <label>Total de rodadas<input id="iTotal" type="number" value="${esc(s.totalRounds??'')}"></label>
+      </div>
+      <div class="kpis">
+        <label>Estádio<input id="iStadium" type="number" min="0" value="${esc(s.myTeam?.stadium??'')}"></label>
+        <label>Bônus login (%)<input id="iBonus" type="number" min="0" max="20" value="${esc(s.myTeam?.loginBonus??'')}"></label>
+      </div>
+      <label>Próximo jogo<input id="iNext" type="datetime-local" value="${localDate}"></label>
+      <button class="btn" onclick="saveInfoEdit()">Salvar informações</button>
+    </div>`);
+  $('iType').value=s.competitionType||'Liga normal';
+};
+window.saveInfoEdit=function(){
+  const s=selectedSlot();
+  s.status='active';
+  s.teamName=$('iTeam').value.trim()||null;
+  s.competitionName=$('iComp').value.trim()||null;
+  s.competitionType=$('iType').value||null;
+  s.round=$('iRound').value?Number($('iRound').value):null;
+  s.totalRounds=$('iTotal').value?Number($('iTotal').value):null;
+  s.myTeam.stadium=$('iStadium').value?Number($('iStadium').value):null;
+  s.myTeam.loginBonus=$('iBonus').value?Number($('iBonus').value):null;
+  s.match.nextMatchAt=$('iNext').value?new Date($('iNext').value).toISOString():null;
+  setField(s,'teamName',s.teamName,'manual',1);
+  saveState();
+  closeModal();
+  renderInfo();
+  toast('Informações atualizadas');
+};
 
 function renderLearning(){
   const rows=state.slots.flatMap(s=>(Array.isArray(s.results)?s.results:[]).map(r=>({...r,slotNumber:s.slotNumber})));
@@ -1403,7 +1716,8 @@ async function v21Analyze(files){
     result=await v21AnalyzePackage(ocr,evidence,'calendar');
     v21ApplyCalendar(result);
     saveState();
-    $('analysisContent').innerHTML=`<div class="card" style="margin-top:12px"><h3>Calendário atualizado</h3><p class="muted small">${selectedSlot().schedule.length} partida(s) reconhecida(s).</p></div>`;
+    $('analysisContent').innerHTML=`<div class="card" style="margin-top:12px"><h3>Calendário atualizado</h3><p class="muted small">${selectedSlot().schedule.length} partida(s) reconhecida(s).</p><div class="actions"><button class="btn" onclick="showView('info')">Ver calendário e informações</button></div></div>`;
+    renderInfo();
     setProgress(100,'Calendário atualizado');
     job('Calendário atualizado.','done');
     return;
@@ -1440,7 +1754,7 @@ function setAnalysisMode(mode){
   document.querySelectorAll('.mode-card').forEach(b=>b.classList.toggle('active',b.dataset.mode===mode));
   const cfg={
     tactic:['Enviar vídeo ou imagens da partida','Mostre tela inicial, árbitro, forças e Data Analyst. A IA marca qualquer campo que não conseguir ler.'],
-    market:['Enviar vídeo do elenco/mercado','Mostre elenco, treinamento e lista de transferências. Camisa laranja = treino; setas = venda.'],
+    market:['Enviar vídeo do elenco','Mostre o elenco completo e os jogadores em treinamento. Não é necessário mostrar a lista de transferências.'],
     result:['Enviar vídeo do resultado','A V2 pode extrair o placar; por enquanto, o registro manual continua disponível no Pré-jogo.'],
     calendar:['Enviar vídeo do calendário','Use para capturar próximos jogos e horários; campos não lidos continuarão NI.']
   }[mode];
@@ -1499,7 +1813,7 @@ function apiModal(msg=''){
 window.saveApiKey=function(){const v=$('apiKeyInput').value.trim();if(v)localStorage.setItem(API_KEY_STORAGE,v);else localStorage.removeItem(API_KEY_STORAGE);closeModal();hydrateSettings();toast(v?'API salva':'API removida')};
 
 function hydrateSettings(){
-  $('userNick').value=settings.userNick||'leandrozzy';$('modelSelect').value=settings.model||'gemini-3.8-flash';$('notifyMinutes').value=settings.notifyMinutes||20;$('notifyEnabled').checked=!!settings.notifyEnabled;$('apiBtn').textContent=localStorage.getItem(API_KEY_STORAGE)?'API configurada':'API Gemini';
+  $('userNick').value=settings.userNick||'leandrozzy';$('modelSelect').value=settings.model||'gemini-3.5-flash';$('notifyMinutes').value=settings.notifyMinutes||20;$('notifyEnabled').checked=!!settings.notifyEnabled;$('apiBtn').textContent=localStorage.getItem(API_KEY_STORAGE)?'API configurada':'API Gemini';
 }
 function saveSettingsUi(){settings.userNick=$('userNick').value.trim()||'leandrozzy';settings.model=$('modelSelect').value;settings.notifyMinutes=Math.max(1,Math.min(180,Number($('notifyMinutes').value)||20));settings.notifyEnabled=$('notifyEnabled').checked;saveSettings();toast('Configurações salvas')}
 async function requestNotifications(){if(!('Notification'in window)){toast('Notificações não suportadas');return}const p=await Notification.requestPermission();toast(p==='granted'?'Notificações permitidas':'Permissão não concedida')}
@@ -1568,7 +1882,7 @@ async function importBackup(file){
   const obj=JSON.parse(await file.text());if(!obj?.state?.slots)throw new Error('Backup inválido');state=obj.state;settings={...defaultSettings(),...(obj.settings||{})};saveSettings();saveState();hydrateSettings();toast('Backup importado')
 }
 
-function renderAll(){renderSlotSwitcher();renderDashboard();renderPregame();renderMarket();renderLearning();renderHistory();hydrateSettings()}
+function renderAll(){renderSlotSwitcher();renderDashboard();renderPregame();renderInfo();renderMarket();renderLearning();renderHistory();hydrateSettings()}
 function bind(){
   document.querySelectorAll('.nav-btn').forEach(b=>b.addEventListener('click',()=>showView(b.dataset.view)));
   document.querySelectorAll('.mode-card').forEach(b=>b.addEventListener('click',()=>setAnalysisMode(b.dataset.mode)));
@@ -1579,5 +1893,6 @@ function bind(){
   $('uploadZone').addEventListener('drop',e=>handleFiles([...e.dataTransfer.files]));
   $('refreshBtn').onclick=()=>{renderAll();checkNotifications();toast('Atualizado')};$('saveSettingsBtn').onclick=saveSettingsUi;$('notifyBtn').onclick=requestNotifications;$('migrateBtn').onclick=migrateV1;$('v1ImportInput').onchange=async()=>{try{await importV1BackupFile($('v1ImportInput').files[0])}catch(e){toast(e.message)}};$('exportBtn').onclick=exportBackup;$('importInput').onchange=async()=>{try{await importBackup($('importInput').files[0])}catch(e){toast(e.message)}};
   $('marketAnalyzeBtn').onclick=()=>{const s=selectedSlot();s.marketPlan=buildMarketPlan(s);saveState();renderMarket();toast('Plano recalculado')};
+  if($('infoEditBtn'))$('infoEditBtn').onclick=infoEditModal;
 }
 document.addEventListener('DOMContentLoaded',()=>{bind();renderAll();setAnalysisMode('tactic');setInterval(checkNotifications,30000);checkNotifications()});
