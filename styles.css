@@ -46,3 +46,25 @@ button{cursor:pointer}
 .job-banner{position:sticky;top:160px;z-index:19;margin:0 auto;max-width:1120px;padding:8px 12px;background:#12304b;border:1px solid #244d6e;border-radius:0 0 10px 10px;font-size:11px}.job-banner.error{background:#431c24;border-color:#74313c}.job-banner.done{background:#10352e;border-color:#235b4e}
 @media(max-width:820px){.mode-grid{grid-template-columns:repeat(2,1fr)}.pregame-grid,.market-columns{grid-template-columns:1fr}.slots-grid{grid-template-columns:1fr}.position-health{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:640px){.topbar{padding:10px}.brand h1{font-size:15px}.env-pill{display:none}.main-nav{top:64px}.slot-switcher{top:109px}.container{padding:10px 8px 65px}.kpis{grid-template-columns:repeat(2,1fr)}.field-grid{grid-template-columns:1fr}.upload-options{grid-template-columns:1fr}.preview-grid{grid-template-columns:repeat(2,1fr)}.preview-grid img,.preview-grid video{height:100px}.versus{gap:5px}.strength-big{font-size:25px}.job-banner{top:151px}}
+
+/* v2.0.3 - Android analysis controls */
+.analyze-now-wrap{
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding:0 14px 14px;
+}
+.analyze-now{min-width:210px}
+.analyze-now:disabled{opacity:.55;cursor:not-allowed}
+#selectedMediaInfo{margin:0}
+#view-analyze{padding-bottom:110px}
+@media(max-width:640px){
+  .analyze-now-wrap{
+    position:sticky;bottom:8px;z-index:18;
+    margin:0 8px 10px;padding:10px;
+    border:1px solid #254865;border-radius:13px;
+    background:rgba(8,22,37,.96);backdrop-filter:blur(10px);
+    box-shadow:0 12px 28px rgba(0,0,0,.38)
+  }
+  .analyze-now{width:100%;min-width:0}
+  #selectedMediaInfo{width:100%;text-align:center}
+  .container{padding-bottom:120px}
+}

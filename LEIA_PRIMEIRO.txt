@@ -85,3 +85,23 @@ Para atualizar no GitHub, basta substituir:
 - index.html
 
 Os outros arquivos podem permanecer iguais.
+
+
+CORREÇÃO v2.0.3
+---------------
+1. Diretor IA:
+   - posições antigas da V1 agora aceitam vários nomes/campos;
+   - saúde do elenco conta ATA/MEI/DEF/GOL mesmo em backups legados;
+   - mostra alerta para jogadores cuja posição ainda não puder ser classificada.
+
+2. Análise Android:
+   - botão explícito "Analisar mídia agora";
+   - análise continua tentando iniciar automaticamente;
+   - extração de quadros com timeout e feedback de progresso;
+   - botão fica visível/sticky no celular;
+   - maior espaço inferior para controles não ficarem escondidos.
+
+Para atualizar esta versão, substitua na v2-development:
+- index.html
+- app.js
+- styles.css

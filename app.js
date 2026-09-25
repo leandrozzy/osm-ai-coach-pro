@@ -1,6 +1,6 @@
 'use strict';
 
-const V2_VERSION = '2.0.2';
+const V2_VERSION = '2.0.3';
 const STATE_KEY = 'osm_ai_coach_pro_v2_state';
 const SETTINGS_KEY = 'osm_ai_coach_pro_v2_settings';
 const API_KEY_STORAGE = 'osm_ai_coach_pro_gemini_key';
@@ -91,6 +91,8 @@ function normalizeSlot(s){
 let state=loadState();
 let settings={...defaultSettings(),...safeParse(localStorage.getItem(SETTINGS_KEY),{})};
 let analysisMode='tactic';
+let pendingMediaFiles=[];
+let analysisBusy=false;
 
 function saveState(){ state.version=V2_VERSION; localStorage.setItem(STATE_KEY,JSON.stringify(state)); renderAll(); }
 function saveSettings(){ localStorage.setItem(SETTINGS_KEY,JSON.stringify(settings)); }
@@ -146,7 +148,7 @@ function renderSlotSwitcher(){
   $('slotSwitcher').innerHTML=state.slots.map(s=>`<button class="slot-chip ${s.slotNumber===state.selectedSlot?'active':''}" onclick="selectSlot(${s.slotNumber})">Slot ${s.slotNumber}${s.competitionType==='Batalha'?' · Batalha':''}</button>`).join('');
 }
 window.selectSlot=function(n){
-  state.selectedSlot=n;localStorage.setItem(STATE_KEY,JSON.stringify(state));renderAll();
+  state.selectedSlot=n;localStorage.setItem(STATE_KEY,JSON.stringify(state));if($('analysisSlot'))$('analysisSlot').value=String(n);renderAll();
   if($('view-pregame').classList.contains('active'))renderPregame();
   toast(`Slot ${n} selecionado`);
 };
@@ -326,23 +328,52 @@ async function fileToInline(file){
 }
 async function videoFrames(file,maxFrames=7){
   return new Promise((resolve,reject)=>{
-    const video=document.createElement('video'),url=URL.createObjectURL(file);video.src=url;video.muted=true;video.playsInline=true;
+    const video=document.createElement('video');
+    const url=URL.createObjectURL(file);
+    video.src=url;video.muted=true;video.playsInline=true;video.preload='metadata';
+    const cleanup=()=>{try{video.pause()}catch{}URL.revokeObjectURL(url)};
+    const fail=(msg)=>{cleanup();reject(new Error(msg))};
+    const timer=setTimeout(()=>fail('O Android demorou demais para abrir o vídeo. Tente novamente ou envie imagens da partida.'),20000);
     video.onloadedmetadata=async()=>{
-      const duration=Math.min(video.duration||0,90),canvas=document.createElement('canvas'),ctx=canvas.getContext('2d');canvas.width=720;
-      canvas.height=Math.max(360,Math.round(720*(video.videoHeight||720)/(video.videoWidth||1280)));
-      const frames=[];for(let i=0;i<maxFrames;i++){const t=duration*(i+.5)/maxFrames;await seek(video,t);ctx.drawImage(video,0,0,canvas.width,canvas.height);frames.push(canvas.toDataURL('image/jpeg',.72).split(',')[1])}
-      URL.revokeObjectURL(url);resolve(frames);
-    };video.onerror=()=>{URL.revokeObjectURL(url);reject(new Error('Não consegui ler o vídeo'))};
+      clearTimeout(timer);
+      try{
+        const duration=Math.min(Number(video.duration)||0,120);
+        if(!duration)throw new Error('Duração do vídeo não identificada');
+        const canvas=document.createElement('canvas'),ctx=canvas.getContext('2d',{alpha:false});
+        const vw=video.videoWidth||1280,vh=video.videoHeight||720;
+        canvas.width=720;canvas.height=Math.max(360,Math.round(720*vh/vw));
+        const frames=[];
+        const total=Math.max(4,Math.min(maxFrames,8));
+        for(let i=0;i<total;i++){
+          setProgress(12+Math.round((i/total)*36),`Extraindo quadro ${i+1}/${total}…`);
+          const t=Math.max(.05,Math.min(duration-.1,duration*(i+.35)/total));
+          await seekWithTimeout(video,t,5000);
+          ctx.drawImage(video,0,0,canvas.width,canvas.height);
+          frames.push(canvas.toDataURL('image/jpeg',.72).split(',')[1]);
+        }
+        cleanup();resolve(frames);
+      }catch(e){cleanup();reject(e)}
+    };
+    video.onerror=()=>fail('Não consegui decodificar o vídeo neste navegador.');
+    try{video.load()}catch{}
   });
 }
-function seek(video,t){return new Promise(res=>{const h=()=>{video.removeEventListener('seeked',h);res()};video.addEventListener('seeked',h);video.currentTime=Math.min(Math.max(0,t),Math.max(0,(video.duration||t)-.05))})}
-async function geminiJson(parts,temperature=.1,maxOutputTokens=5000){
-  const key=localStorage.getItem(API_KEY_STORAGE);if(!key)throw new Error('Configure a chave Gemini');
-  const model=settings.model||'gemini-2.5-flash';const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
-  const body={contents:[{parts}],generationConfig:{temperature,maxOutputTokens,responseMimeType:'application/json'}};
-  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  if(!r.ok){const txt=await r.text();throw new Error(`Gemini ${r.status}: ${txt.slice(0,220)}`)}
-  const j=await r.json(),text=j.candidates?.[0]?.content?.parts?.map(x=>x.text||'').join('')||'';return JSON.parse(text);
+function seekWithTimeout(video,t,timeoutMs=5000){
+  return new Promise((resolve,reject)=>{
+    let done=false;
+    const finish=(ok)=>{
+      if(done)return;done=true;
+      clearTimeout(timer);
+      video.removeEventListener('seeked',onSeeked);
+      video.removeEventListener('error',onError);
+      ok?resolve():reject(new Error('Falha ao buscar um trecho do vídeo'));
+    };
+    const onSeeked=()=>finish(true),onError=()=>finish(false);
+    const timer=setTimeout(()=>finish(true),timeoutMs);
+    video.addEventListener('seeked',onSeeked,{once:true});
+    video.addEventListener('error',onError,{once:true});
+    try{video.currentTime=t}catch{finish(false)}
+  });
 }
 function analysisPrompt(){
   return `Você analisa telas do OSM 26 Android. O usuário da conta é "${settings.userNick||'leandrozzy'}". REGRA CRÍTICA: quando esse nick aparecer abaixo de um time, esse lado é SEMPRE "meu time"; nunca inverta forças. Não invente dados. Se não estiver visível, use null. Ausência visual de Campo de treinamento ou Treino secreto só pode virar false se a tela específica em que esse indicador apareceria estiver claramente presente; caso contrário null. Para árbitro, use Verde/Amarelo/Laranja/Vermelho somente quando visível. Retorne JSON estrito. Cada campo principal deve ser {"value":..., "confidence":0..1}. Também pode retornar sideA/sideB para a tela de comparação. Estrutura:
@@ -453,15 +484,60 @@ function renderMarket(){
   <div class="card" style="margin-top:12px"><h3>Elenco reconhecido</h3>${s.roster.length?rosterTable(s.roster):'<p class="muted">Nenhum jogador reconhecido ainda.</p>'}</div>
   <div class="card" style="margin-top:12px"><h3>Mercado atual</h3>${s.market.length?rosterTable(s.market):'<p class="muted">Nenhuma opção de mercado reconhecida ainda.</p>'}</div>`;
 }
-function countPositions(rows){const c={ATA:0,MEI:0,DEF:0,GOL:0};for(const p of rows){const x=normalizePos(p.position);if(c[x]!==undefined)c[x]++}return c}
-function normalizePos(p){const s=String(p||'').toUpperCase();if(s.includes('ATA')||s.includes('FWD')||s.includes('ST'))return'ATA';if(s.includes('MEI')||s.includes('MID'))return'MEI';if(s.includes('DEF')||s.includes('CB')||s.includes('LB')||s.includes('RB'))return'DEF';if(s.includes('GOL')||s.includes('GK'))return'GOL';return s}
-function buildMarketPlan(s){
-  const counts=countPositions(s.roster),actions=[];for(const [p,target] of Object.entries(POS_TARGET)){if((counts[p]||0)<target)actions.push(`Prioridade: contratar ${target-(counts[p]||0)} ${p}`);else if((counts[p]||0)>target)actions.push(`Há ${(counts[p]||0)-target} ${p} acima da meta; avaliar venda`)}
-  const selling=s.roster.filter(p=>p.forSale).length;if(selling>4)actions.unshift(`Reduzir lista de vendas: ${selling} jogadores marcados; limite desejado é 4`);
-  if(!actions.length)actions.push('Distribuição por posição está no alvo; priorize upgrade de força sem quebrar a estrutura');
-  s.marketPlan={generatedAt:nowIso(),actions};return s.marketPlan;
+function playerPosValue(p){
+  if(!p||typeof p!=='object')return '';
+  return p.position ?? p.pos ?? p.role ?? p.positionName ?? p.position_name ?? p.type ?? p.category ?? p.line ?? '';
 }
-function rosterTable(rows){return `<div style="overflow:auto"><table class="simple-table"><thead><tr><th>Jogador</th><th>Pos.</th><th>Força</th><th>Idade</th><th>Valor/Preço</th><th>Status</th></tr></thead><tbody>${rows.map(p=>`<tr><td>${esc(p.name)}</td><td>${esc(p.position)}</td><td>${esc(p.rating)}</td><td>${esc(p.age)}</td><td>${esc(p.price??p.value)}</td><td>${p.training?'Treino':p.forSale?'Venda':'—'}</td></tr>`).join('')}</tbody></table></div>`}
+function playerNameValue(p){
+  if(!p||typeof p!=='object')return '';
+  return p.name ?? p.playerName ?? p.player_name ?? p.nome ?? '';
+}
+function playerRatingValue(p){
+  if(!p||typeof p!=='object')return null;
+  return p.rating ?? p.overall ?? p.power ?? p.strength ?? p.forca ?? p.força ?? null;
+}
+function playerAgeValue(p){
+  if(!p||typeof p!=='object')return null;
+  return p.age ?? p.idade ?? null;
+}
+function playerMoneyValue(p){
+  if(!p||typeof p!=='object')return null;
+  return p.price ?? p.value ?? p.marketValue ?? p.market_value ?? p.valor ?? null;
+}
+function countPositions(rows){
+  const c={ATA:0,MEI:0,DEF:0,GOL:0};
+  for(const p of (Array.isArray(rows)?rows:[])){
+    const x=normalizePos(playerPosValue(p));
+    if(c[x]!==undefined)c[x]++;
+  }
+  return c
+}
+function normalizePos(p){
+  const s=String(p||'').trim().toUpperCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  if(!s)return '';
+  if(s==='A'||s==='ATT'||s==='FW'||s==='FWD'||s==='ST'||s.includes('ATA')||s.includes('ATAC')||s.includes('FORWARD')||s.includes('STRIKER'))return'ATA';
+  if(s==='M'||s==='MF'||s==='MID'||s.includes('MEI')||s.includes('MIDFIELD')||s.includes('MEDIO')||s.includes('MEIA'))return'MEI';
+  if(s==='D'||s==='DF'||s==='DEF'||s==='CB'||s==='LB'||s==='RB'||s.includes('DEF')||s.includes('ZAG')||s.includes('LATERAL')||s.includes('BACK'))return'DEF';
+  if(s==='G'||s==='GK'||s==='GOL'||s.includes('GOLE')||s.includes('KEEPER')||s.includes('GUARDA-REDES'))return'GOL';
+  return s
+}
+function buildMarketPlan(s){
+  const roster=Array.isArray(s.roster)?s.roster:[];
+  const counts=countPositions(roster),actions=[];
+  for(const [p,target] of Object.entries(POS_TARGET)){
+    if((counts[p]||0)<target)actions.push(`Prioridade: contratar ${target-(counts[p]||0)} ${p}`);
+    else if((counts[p]||0)>target)actions.push(`Há ${(counts[p]||0)-target} ${p} acima da meta; avaliar venda`);
+  }
+  const selling=roster.filter(p=>p?.forSale===true).length;
+  if(selling>4)actions.unshift(`Reduzir lista de vendas: ${selling} jogadores marcados; limite desejado é 4`);
+  const classified=Object.values(counts).reduce((a,b)=>a+b,0);
+  const unclassified=Math.max(0,roster.length-classified);
+  if(unclassified)actions.unshift(`${unclassified} jogador(es) sem posição reconhecida; revise o campo Pos. no elenco`);
+  if(!actions.length)actions.push('Distribuição por posição está no alvo; priorize upgrade de força sem quebrar a estrutura');
+  s.marketPlan={generatedAt:nowIso(),actions,counts,unclassified};return s.marketPlan;
+}
+function rosterTable(rows){return `<div style="overflow:auto"><table class="simple-table"><thead><tr><th>Jogador</th><th>Pos.</th><th>Força</th><th>Idade</th><th>Valor/Preço</th><th>Status</th></tr></thead><tbody>${(Array.isArray(rows)?rows:[]).map(p=>`<tr><td>${esc(playerNameValue(p)||'NI')}</td><td>${esc(playerPosValue(p)||'NI')}</td><td>${esc(playerRatingValue(p))}</td><td>${esc(playerAgeValue(p))}</td><td>${esc(playerMoneyValue(p))}</td><td>${p.training===true?'Treino':p.forSale===true?'Venda':'—'}</td></tr>`).join('')}</tbody></table></div>`}
 
 async function analyzeMarketFiles(files){
   const n=Number($('analysisSlot').value)||state.selectedSlot;job('Lendo elenco e mercado…');setProgress(15,'Extraindo mídia…');$('progressWrap').classList.remove('hidden');
@@ -507,12 +583,36 @@ function setAnalysisMode(mode){
 window.setAnalysisMode=setAnalysisMode;
 
 async function handleFiles(files){
-  if(!files.length)return;renderPreview(files);
-  if(!localStorage.getItem(API_KEY_STORAGE)){apiModal('Configure a API Gemini antes de analisar.');return}
-  if(analysisMode==='market')return analyzeMarketFiles(files);
-  if(analysisMode==='tactic')return analyzeFiles(files);
-  toast('Este modo será ampliado na próxima etapa; use o registro manual por enquanto.');
+  if(!files.length)return;
+  pendingMediaFiles=[...files];
+  renderPreview(pendingMediaFiles);
+  const totalMb=pendingMediaFiles.reduce((a,f)=>a+(f.size||0),0)/1024/1024;
+  $('selectedMediaInfo').textContent=`${pendingMediaFiles.length} arquivo(s) selecionado(s) · ${totalMb.toFixed(1)} MB`;
+  $('analyzeNowBtn').disabled=false;
+  $('analyzeNowBtn').textContent='🔎 Analisar mídia agora';
+  // inicia automaticamente, mas o botão continua disponível como fallback no Android
+  if(!analysisBusy){
+    setTimeout(()=>runPendingAnalysis(),250);
+  }
 }
+async function runPendingAnalysis(){
+  if(analysisBusy)return;
+  if(!pendingMediaFiles.length){toast('Escolha uma mídia primeiro');return}
+  if(!localStorage.getItem(API_KEY_STORAGE)){apiModal('Configure a API Gemini antes de analisar.');return}
+  analysisBusy=true;
+  $('analyzeNowBtn').disabled=true;
+  $('analyzeNowBtn').textContent='Analisando…';
+  try{
+    if(analysisMode==='market')await analyzeMarketFiles(pendingMediaFiles);
+    else if(analysisMode==='tactic')await analyzeFiles(pendingMediaFiles);
+    else toast('Este modo será ampliado; use o registro manual por enquanto.');
+  }finally{
+    analysisBusy=false;
+    $('analyzeNowBtn').disabled=false;
+    $('analyzeNowBtn').textContent='🔎 Analisar mídia novamente';
+  }
+}
+window.runPendingAnalysis=runPendingAnalysis;
 function renderPreview(files){
   $('mediaPreview').innerHTML=files.slice(0,8).map((f,i)=>{const u=URL.createObjectURL(f);return f.type.startsWith('image/')?`<img src="${u}" alt="Imagem ${i+1}">`:`<video src="${u}" muted controls></video>`}).join('');
 }
@@ -597,7 +697,7 @@ function bind(){
   document.querySelectorAll('.nav-btn').forEach(b=>b.addEventListener('click',()=>showView(b.dataset.view)));
   document.querySelectorAll('.mode-card').forEach(b=>b.addEventListener('click',()=>setAnalysisMode(b.dataset.mode)));
   $('apiBtn').onclick=()=>apiModal();$('modalClose').onclick=closeModal;$('modal').addEventListener('click',e=>{if(e.target===$('modal'))closeModal()});
-  $('chooseMediaBtn').onclick=()=>$('mediaInput').click();$('mediaInput').onchange=()=>handleFiles([...$('mediaInput').files]);
+  $('chooseMediaBtn').onclick=()=>$('mediaInput').click();$('mediaInput').onchange=()=>handleFiles([...$('mediaInput').files]);$('analyzeNowBtn').onclick=runPendingAnalysis;$('analysisSlot').onchange=()=>{state.selectedSlot=Number($('analysisSlot').value)||1;localStorage.setItem(STATE_KEY,JSON.stringify(state));renderSlotSwitcher()};
   ['dragenter','dragover'].forEach(ev=>$('uploadZone').addEventListener(ev,e=>{e.preventDefault();$('uploadZone').classList.add('drag')}));
   ['dragleave','drop'].forEach(ev=>$('uploadZone').addEventListener(ev,e=>{e.preventDefault();$('uploadZone').classList.remove('drag')}));
   $('uploadZone').addEventListener('drop',e=>handleFiles([...e.dataTransfer.files]));
