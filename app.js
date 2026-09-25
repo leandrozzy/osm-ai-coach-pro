@@ -1,6 +1,6 @@
 'use strict';
 
-const V2_VERSION = '2.0.7';
+const V2_VERSION = '2.0.8';
 const STATE_KEY = 'osm_ai_coach_pro_v2_state';
 const SETTINGS_KEY = 'osm_ai_coach_pro_v2_settings';
 const API_KEY_STORAGE = 'osm_ai_coach_pro_gemini_key';
@@ -241,10 +241,38 @@ function renderPregame(){
 }
 function ctx(k,v){return `<div class="context-item"><span>${esc(k)}</span><b>${esc(v)}</b></div>`}
 function fieldAuditHtml(s){
-  return `<div class="audit-card"><div class="audit-top"><div><span class="eyebrow">AUDITORIA</span><h3>Origem campo por campo</h3></div></div><div class="field-grid">${FIELD_DEFS.map(([p,l])=>{
+  const attention=FIELD_DEFS.filter(([p])=>{
     const v=getPath(s,p),m=s.fieldMeta[p]||{source:'unknown',confidence:0};
-    return `<div class="field-row"><div><div class="label">${esc(l)}</div><div class="value">${esc(typeof v==='boolean'?boolLabel(v):v)}</div><div class="meta ${sourceClass(m.source)}">${sourceLabel(m.source)} · ${Math.round((m.confidence||0)*100)}%</div></div><button class="btn ghost tiny" onclick="editField(${s.slotNumber},'${p}')">Editar</button></div>`;
-  }).join('')}</div></div>`;
+    return !(hasValue(v)||typeof v==='boolean') || m.source==='unknown' || Number(m.confidence||0)<.6;
+  });
+
+  const compactRow=([p,l])=>{
+    const v=getPath(s,p),m=s.fieldMeta[p]||{source:'unknown',confidence:0};
+    return `<div class="field-row compact-field">
+      <div>
+        <div class="label">${esc(l)}</div>
+        <div class="value">${esc(typeof v==='boolean'?boolLabel(v):v)}</div>
+        <div class="meta ${sourceClass(m.source)}">${sourceLabel(m.source)} · ${Math.round((m.confidence||0)*100)}%</div>
+      </div>
+      <button class="btn ghost tiny" onclick="editField(${s.slotNumber},'${p}')">Editar</button>
+    </div>`;
+  };
+
+  return `<div class="audit-card compact-audit">
+    <div class="audit-top">
+      <div>
+        <span class="eyebrow">REVISÃO DOS DADOS</span>
+        <h3>${attention.length?`${attention.length} campo(s) precisam de atenção`:'Leitura conferida'}</h3>
+      </div>
+      <button class="btn ghost tiny" onclick="editAllFields(${s.slotNumber})">Editar todos</button>
+    </div>
+    <p class="small muted"><b>NI = Não identificado.</b> Significa que o app não encontrou esse dado e não vai inventá-lo.</p>
+    ${attention.length?`<div class="field-grid attention-grid">${attention.map(compactRow).join('')}</div>`:'<p class="small muted">Nenhum campo problemático no momento.</p>'}
+    <details class="all-fields-details">
+      <summary>Ver todos os campos (${FIELD_DEFS.length})</summary>
+      <div class="field-grid all-fields-grid">${FIELD_DEFS.map(compactRow).join('')}</div>
+    </details>
+  </div>`;
 }
 function tacticHtml(s){
   if(!s.tactic) return `<div class="card" style="margin-top:12px"><div class="tactic-head"><div><span class="eyebrow">RECOMENDAÇÃO</span><h3>Tática ainda não gerada</h3></div></div><p class="muted small">A V2 gera vários candidatos internamente, elimina incoerências e mostra apenas o final.</p><div class="actions"><button class="btn" onclick="generateTactic(${s.slotNumber})">Gerar tática</button></div></div>`;
@@ -381,61 +409,65 @@ async function geminiJson(parts,temperature=.1,maxOutputTokens=5000){
   const key=localStorage.getItem(API_KEY_STORAGE);
   if(!key) throw new Error('API Gemini não configurada.');
 
-  const candidates=await availableModels(key);
-  const ordered=[settings.model,...candidates].filter((x,i,a)=>x&&a.indexOf(x)===i);
+  const live=await availableModels(key);
+  const ordered=[settings.model,...live].filter((x,i,a)=>x&&a.indexOf(x)===i).slice(0,2);
   let last='';
 
-  for(const model of ordered){
-    for(let tryNo=0; tryNo<2; tryNo++){
-      if($('analysisDiagnostics')){
-        $('analysisDiagnostics').textContent=`Gemini: ${model} · tentativa ${tryNo+1}/2`;
-      }
+  async function fetchWithTimeout(url,options,ms=18000){
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),ms);
+    try{return await fetch(url,{...options,signal:controller.signal})}
+    finally{clearTimeout(timer)}
+  }
+
+  for(let mi=0;mi<ordered.length;mi++){
+    const model=ordered[mi];
+
+    for(let tryNo=0;tryNo<2;tryNo++){
+      if($('analysisDiagnostics')) $('analysisDiagnostics').textContent=`Gemini: ${model} · tentativa ${tryNo+1}/2`;
       job(`Consultando ${model}…`);
 
       const body={
         contents:[{role:'user',parts}],
-        generationConfig:{
-          temperature,
-          maxOutputTokens,
-          responseMimeType:'application/json'
-        }
+        generationConfig:{temperature,maxOutputTokens,responseMimeType:'application/json'}
       };
 
       let res;
       try{
-        res=await geminiFetch(model,key,body);
+        res=await fetchWithTimeout(
+          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+          {method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},body:JSON.stringify(body)},
+          18000
+        );
       }catch(e){
-        last=e.message;
-        await new Promise(r=>setTimeout(r,800));
-        continue;
+        last=e?.name==='AbortError'
+          ? `Tempo limite excedido em ${model}.`
+          : `Falha de conexão em ${model}: ${e?.message||e}`;
+        if(tryNo===0){await new Promise(r=>setTimeout(r,700));continue}
+        break;
       }
 
       if(res.ok){
         const data=await res.json();
-        const text=(data.candidates?.[0]?.content?.parts||[])
-          .map(p=>p.text||'')
-          .join('')
-          .trim();
-
-        if(!text) throw new Error('A IA não retornou conteúdo utilizável.');
-
-        settings.model=model;
-        saveSettings();
-        hydrateSettings();
-
-        if($('analysisDiagnostics')){
-          $('analysisDiagnostics').textContent=`Análise concluída com ${model}.`;
-        }
+        const text=(data.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('').trim();
+        if(!text){last=`${model} não retornou conteúdo.`;break}
+        settings.model=model;saveSettings();hydrateSettings();
+        if($('analysisDiagnostics')) $('analysisDiagnostics').textContent=`Análise concluída com ${model}.`;
         return parseJsonText(text);
       }
 
-      const status=res.status;
-      const txt=await res.text();
-      last=`Gemini ${status}: ${txt.slice(0,260)}`;
+      const status=res.status,txt=await res.text();
+      last=`Gemini ${status}: ${txt.slice(0,220)}`;
 
-      // Igual à versão antiga: só repete indisponibilidade temporária.
-      if(![429,500,502,503,504].includes(status)) break;
-      await new Promise(r=>setTimeout(r,1600*(tryNo+1)));
+      if([429,500,502,503,504].includes(status) && tryNo===0){
+        await new Promise(r=>setTimeout(r,900));
+        continue;
+      }
+      break;
+    }
+
+    if(mi<ordered.length-1 && $('analysisDiagnostics')){
+      $('analysisDiagnostics').textContent=`${model} indisponível. Tentando ${ordered[mi+1]}…`;
     }
   }
 
@@ -569,7 +601,7 @@ async function analyzeFiles(files){
     const data=await geminiJson(parts,.05,6000);setProgress(85,'Validando campos e lado do usuário…');applyAnalysis(n,data);
     setProgress(100,'Leitura concluída');job('Leitura concluída. Revise os campos marcados como NI.','done');renderCoverage(state.slots[n-1]);renderAnalysisSummary(state.slots[n-1]);
     if($('autoTactic').checked && !missingRequired(state.slots[n-1]).length) await generateTactic(n);
-  }catch(e){job(e.message,'error');toast(e.message)} finally{setTimeout(()=>$('progressWrap').classList.add('hidden'),1200)}
+  }catch(e){throw e} finally{setTimeout(()=>$('progressWrap').classList.add('hidden'),1200)}
 }
 function setProgress(p,t){$('progressBar').style.width=p+'%';$('progressText').textContent=t}
 function renderCoverage(s){
@@ -737,9 +769,9 @@ async function analyzeMarketFiles(files){
   const n=Number($('analysisSlot').value)||state.selectedSlot;job('Lendo elenco e mercado…');setProgress(15,'Extraindo mídia…');$('progressWrap').classList.remove('hidden');
   try{
     const parts=[{text:`Analise imagens de OSM 26. Extraia elenco e lista de transferências. Camisa laranja significa TREINAMENTO, nunca venda. Venda é indicada por setas/ícone de transferência. Não invente. Retorne {"roster":[{"name":null,"position":null,"rating":null,"age":null,"value":null,"training":false,"forSale":false}],"market":[{"name":null,"position":null,"rating":null,"age":null,"price":null}]} JSON estrito.`}];
-    for(const f of files){if(f.type.startsWith('image/'))parts.push({inlineData:{mimeType:f.type,data:await fileToInline(f)}});else if(f.type.startsWith('video/'))for(const b64 of await videoFrames(f,8))parts.push({inlineData:{mimeType:'image/jpeg',data:b64}})}
+    for(const f of files){if(f.type.startsWith('image/'))parts.push({inlineData:{mimeType:f.type,data:await fileToInline(f)}});else if(f.type.startsWith('video/'))for(const b64 of await videoFrames(f,5))parts.push({inlineData:{mimeType:'image/jpeg',data:b64}})}
     setProgress(65,'Analisando elenco…');const data=await geminiJson(parts,.05,6000);const s=state.slots[n-1];if(Array.isArray(data.roster)&&data.roster.length)s.roster=data.roster;if(Array.isArray(data.market)&&data.market.length)s.market=data.market;s.status='active';s.marketPlan=buildMarketPlan(s);saveState();setProgress(100,'Mercado atualizado');job('Elenco e mercado atualizados.','done');renderMarket();
-  }catch(e){job(e.message,'error');toast(e.message)}finally{setTimeout(()=>$('progressWrap').classList.add('hidden'),1000)}
+  }catch(e){throw e}finally{setTimeout(()=>$('progressWrap').classList.add('hidden'),1000)}
 }
 
 function renderLearning(){
@@ -765,7 +797,23 @@ window.saveResult=function(n){
 };
 
 function setAnalysisMode(mode){
-  analysisMode=mode;document.querySelectorAll('.mode-card').forEach(b=>b.classList.toggle('active',b.dataset.mode===mode));
+  analysisMode=mode;
+  pendingMediaFiles=[];
+  analysisBusy=false;
+  if($('mediaInput')) $('mediaInput').value='';
+  if($('mediaPreview')) $('mediaPreview').innerHTML='';
+  if($('progressWrap')) $('progressWrap').classList.add('hidden');
+  if($('progressBar')) $('progressBar').style.width='0%';
+  if($('progressText')) $('progressText').textContent='Preparando…';
+  if($('selectedMediaInfo')) $('selectedMediaInfo').textContent='Nenhuma mídia selecionada.';
+  if($('analyzeNowBtn')){
+    $('analyzeNowBtn').disabled=true;
+    $('analyzeNowBtn').textContent='🔎 Analisar mídia agora';
+  }
+  if($('analysisDiagnostics')) $('analysisDiagnostics').textContent='';
+  if($('coverageContent')) $('coverageContent').innerHTML='';
+  if($('analysisContent')) $('analysisContent').innerHTML='';
+  document.querySelectorAll('.mode-card').forEach(b=>b.classList.toggle('active',b.dataset.mode===mode));
   const cfg={
     tactic:['Enviar vídeo ou imagens da partida','Mostre tela inicial, árbitro, forças e Data Analyst. A IA marca qualquer campo que não conseguir ler.'],
     market:['Enviar vídeo do elenco/mercado','Mostre elenco, treinamento e lista de transferências. Camisa laranja = treino; setas = venda.'],
@@ -793,14 +841,21 @@ async function runPendingAnalysis(){
   if(analysisBusy)return;
   if(!pendingMediaFiles.length){toast('Escolha uma mídia primeiro');return}
   if(!localStorage.getItem(API_KEY_STORAGE)){apiModal('Configure a API Gemini antes de analisar.');return}
+
   analysisBusy=true;
-  if($('analysisDiagnostics'))$('analysisDiagnostics').textContent='Análise iniciada: extração de quadros → OCR local → Gemini 3.8.';
+  if($('analysisDiagnostics')) $('analysisDiagnostics').textContent='Análise iniciada…';
   $('analyzeNowBtn').disabled=true;
   $('analyzeNowBtn').textContent='Analisando…';
+
   try{
-    if(analysisMode==='market')await analyzeMarketFiles(pendingMediaFiles);
-    else if(analysisMode==='tactic')await analyzeFiles(pendingMediaFiles);
+    if(analysisMode==='market') await analyzeMarketFiles(pendingMediaFiles);
+    else if(analysisMode==='tactic') await analyzeFiles(pendingMediaFiles);
     else toast('Este modo será ampliado; use o registro manual por enquanto.');
+  }catch(e){
+    const msg=e?.message||String(e);
+    if($('analysisDiagnostics')) $('analysisDiagnostics').textContent=`Falha: ${msg}`;
+    job(msg,'error');
+    toast(msg);
   }finally{
     analysisBusy=false;
     $('analyzeNowBtn').disabled=false;

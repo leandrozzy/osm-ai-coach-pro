@@ -80,3 +80,27 @@ body{padding-bottom:max(28px,env(safe-area-inset-bottom))}
   .modal{padding-bottom:max(12px,env(safe-area-inset-bottom))}
   .modal-sheet{margin-bottom:env(safe-area-inset-bottom)}
 }
+
+/* v2.0.8 - UX análise e revisão compacta */
+.compact-audit{padding:12px}
+.compact-audit h3{margin:3px 0;font-size:17px}
+.attention-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+.compact-field{padding:8px 10px;min-height:70px}
+.compact-field .value{font-size:12px}
+.all-fields-details{margin-top:12px;border-top:1px solid #1d3852;padding-top:10px}
+.all-fields-details summary{cursor:pointer;color:#9fc7e8;font-size:12px;font-weight:850}
+.all-fields-grid{margin-top:10px}
+@media(max-width:640px){
+  .attention-grid,.all-fields-grid{grid-template-columns:1fr}
+  .analyze-now-wrap{
+    position:static!important;
+    margin:0!important;
+    border:0!important;
+    border-radius:0!important;
+    background:transparent!important;
+    box-shadow:none!important;
+    backdrop-filter:none!important;
+    padding:0 14px 14px!important;
+  }
+  #view-analyze{padding-bottom:40px!important}
+}
