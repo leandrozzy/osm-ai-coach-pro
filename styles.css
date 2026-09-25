@@ -643,3 +643,16 @@ button:hover,.btn:hover,.primary:hover,.secondary:hover{box-shadow:0 10px 24px r
 .calendar-result.draw{color:#ffd772}
 .calendar-result.loss{color:#ff9ba7}
 .calendar-when b{white-space:normal}
+
+/* v7.0 workflow */
+.learning-box{margin:14px 0;padding:13px 14px;border-radius:14px;background:linear-gradient(180deg,#102f35,#0b2126);border:1px solid #2b796c}
+.learning-box b{color:#8df0cf}.learning-box p{margin:5px 0 0;color:#c9e7df}
+.change-block{padding:12px 14px;border-radius:14px;background:#0c2035;border:1px solid #294965;margin:8px 0;display:flex;flex-direction:column;gap:4px}
+.change-block.good{border-color:#2d7e68}.change-block.warn{border-color:#7a5a2e}
+.change-block span{color:#b8cbe0;font-size:12px}
+.history-match{padding:13px 0;border-bottom:1px solid #23405d}.history-match:last-child{border-bottom:0}
+.history-match-main{display:flex;justify-content:space-between;gap:10px}.history-match-main span{color:#9db4cc;font-size:11px}
+.history-match-meta{display:flex;flex-wrap:wrap;gap:7px;margin-top:7px}.history-match-meta span{background:#0a1a2b;border:1px solid #24415d;border-radius:999px;padding:5px 8px;font-size:10px;color:#c4d6e8}
+.result-saved{border-color:#2d7e68!important}
+.evolution-dashboard .kpi b{font-size:18px}
+@media(max-width:640px){.history-match-main{flex-direction:column}.history-match-meta{gap:5px}}

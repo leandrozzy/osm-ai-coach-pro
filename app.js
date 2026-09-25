@@ -2986,3 +2986,353 @@ function renderCalendarResultV54(result,slotNumber=selectedSlot){
  </div>`;
  cacheAnalysisUiV54(slotNumber,'calendar');
 }
+
+
+// ===== v7.0: workflow consistente pós-jogo, evolução automática e histórico inteligente =====
+let resultTargetCalendarIndexV70=null;
+
+function isPlausibleOpponentV70(name){
+  const n=normalize(name);
+  if(!n)return false;
+  if(['asd','ni','n a','na','tbd','a definir','adversario','oponente','bye','livre'].includes(n))return false;
+  if(n.length<3)return false;
+  return true;
+}
+function hasCurrentOpponentAnalysisV70(s){
+  if(!s?.opponent?.teamName || !s?.lastOpponentAnalysisAt)return false;
+  return normalize(s.opponentAnalysisFor)===normalize(s.opponent.teamName);
+}
+function clearOpponentAnalysisV70(s){
+  const keepName=s.opponent?.teamName||null;
+  s.opponent={
+    teamName:keepName,human:null,manager:null,overall:null,goalkeeper:null,defence:null,midfield:null,attack:null,
+    squadValue:null,playerCount:null,stadium:null,loginBonus:null,secretTraining:null,trainingCamp:null,
+    formation:null,style:null,marking:null,offside:null,tackling:null
+  };
+  s.match.refereeName=null;s.match.refereeColor=null;
+  s.opponentAnalysisFor=null;s.lastOpponentAnalysisAt=null;
+  s.tactic=null;s.tacticNeedsRefresh=true;
+}
+function syncAfterResult(s){
+  const next=nextFutureRow(s);
+  clearOpponentAnalysisV70(s);
+  if(next){
+    s.match.nextMatchAt=next.dateTime||null;
+    s.match.venue=next.venue||null;
+    s.opponent.teamName=isPlausibleOpponentV70(next.opponent)?next.opponent:null;
+    return;
+  }
+  s.match.nextMatchAt=null;s.match.venue=null;s.opponent.teamName=null;
+}
+function opponentStrengthTextV70(s){
+  return hasCurrentOpponentAnalysisV70(s)&&s.opponent.overall!=null?String(s.opponent.overall):'—';
+}
+function opponentAnalysisBadgeV70(s){
+  return hasCurrentOpponentAnalysisV70(s)?'Analisado':'Análise pendente';
+}
+
+function deriveLearningV70(entry){
+  if(!entry)return '';
+  const outcome=entry.gf>entry.ga?'vitória':entry.gf<entry.ga?'derrota':'empate';
+  const diff=(Number(entry.context?.myOverall)-Number(entry.context?.oppOverall));
+  const human=entry.context?.opponentHuman===true?'humano':entry.context?.opponentHuman===false?'CPU':'tipo NI';
+  const cards=Number(entry.stats?.myYellowCards||0)+Number(entry.stats?.myRedCards||0);
+  const parts=[`${outcome} contra ${human}`];
+  if(Number.isFinite(diff))parts.push(`diferença de força ${diff>=0?'+':''}${diff}`);
+  if(entry.tactic?.formation)parts.push(`${entry.tactic.formation} / ${entry.tactic.gamePlan||'plano NI'}`);
+  if(cards>0)parts.push(`${cards} cartão(ões) nossos`);
+  return parts.join(' · ');
+}
+
+function openResultVideoV70(n,calendarIndex=null){
+  const s=state.slots[n-1];
+  const row=calendarIndex!==null?s.schedule?.[calendarIndex]:resolveCalendarResultRow(s,null);
+  const tactic=row?.tacticSnapshot||s.tactic;
+  if(!tactic){toast('Primeiro gere a tática desse jogo.');return}
+  resultTargetCalendarIndexV70=calendarIndex!==null?calendarIndex:(row?row._i:null);
+  setSelectedSlot(n);
+  analysisMode='result';
+  document.querySelectorAll('[data-analysis-mode]').forEach(x=>x.classList.toggle('active',x.dataset.analysisMode==='result'));
+  renderAnalysisMode();
+  showView('analyze');
+  if(els.slotTarget)els.slotTarget.value=String(n);
+  setTimeout(()=>document.getElementById('mediaInput')?.click(),250);
+}
+function resultModal(n,calendarIndex=null){return openResultVideoV70(n,calendarIndex)}
+
+function applyResultVideoV54(r,slotNumber){
+ const s=state.slots[slotNumber-1];
+ const idx=Number.isInteger(resultTargetCalendarIndexV70)?resultTargetCalendarIndexV70:null;
+ const cal=idx!==null&&s.schedule?.[idx]?{...s.schedule[idx],_i:idx}:resolveCalendarResultRow(s,null);
+ const tactic=cal?.tacticSnapshot||s.tactic;
+ if(!tactic)throw new Error('Primeiro gere a tática desse jogo.');
+ const gf=Number(r.gf),ga=Number(r.ga);
+ if(!Number.isFinite(gf)||!Number.isFinite(ga))throw new Error('Não consegui identificar o placar final no vídeo.');
+ const entry={
+  createdAt:nowIso(),scheduleIndex:cal?cal._i:null,opponent:r.opponent||cal?.opponent||s.opponent.teamName,
+  gf,ga,score:r.score||`${gf}-${ga}`,note:'Resultado extraído por vídeo',tactic:structuredClone(tactic),
+  stats:r.stats||{},events:r.events||[],
+  context:{
+   myOverall:cal?.myOverall??s.myTeam.overall,oppOverall:cal?.oppOverall??s.opponent.overall,
+   oppFormation:r.oppFormation||cal?.opponentSnapshot?.formation||s.opponent.formation,
+   myFormation:r.myFormation||tactic.formation,oppStyle:cal?.opponentSnapshot?.style||s.opponent.style,
+   oppMarking:cal?.opponentSnapshot?.marking||s.opponent.marking,oppOffside:cal?.opponentSnapshot?.offside??s.opponent.offside,
+   opponentHuman:cal?.opponentSnapshot?.human??s.opponent.human,opponentManager:cal?.opponentSnapshot?.manager??s.opponent.manager,
+   venue:cal?.venue||s.match.venue,referee:s.match.refereeColor||s.match.refereeName
+  }
+ };
+ entry.learning=deriveLearningV70(entry);
+ s.results=s.results||[];s.results.push(entry);
+ if(cal&&s.schedule?.[cal._i]){
+   const row=s.schedule[cal._i];row.played=true;row.result=entry.score;row.outcome=gf>ga?'V':gf<ga?'D':'E';
+   row.resultEntryAt=entry.createdAt;row.tacticSnapshot=row.tacticSnapshot||structuredClone(tactic);
+   if(row.competitionType==='cup'&&gf<ga)pruneConditionalCupMatches(s);
+ }
+ s.pendingVideoResultPosition={round:cal?.round??s.round,score:entry.score};
+ if(Number.isFinite(Number(cal?.round)))s.round=Math.max(Number(s.round)||0,Number(cal.round)+1);
+ s.updatedAt=nowIso();syncAfterResult(s);saveState();resultTargetCalendarIndexV70=null;
+}
+function savePostResultPositionV70(){
+ const s=state.slots[selectedSlot-1],p=document.getElementById('videoResultPosition')?.value;
+ if(p){recordPositionAtRound(s,p,s.pendingVideoResultPosition?.round);s.pendingVideoResultPosition=null;saveState();renderHistory();renderInfo();renderToday();toast('Posição atualizada')}
+}
+function renderResultVideo(r){
+ const st=r.stats||{},s=state.slots[selectedSlot-1],entry=(s.results||[]).slice(-1)[0];
+ els.coveragePanel.classList.add('hidden');
+ els.analysisResult.innerHTML=`<div class="result-card result-saved">
+  <span class="eyebrow">RESULTADO SALVO</span><h3>${esc(s.teamName)} · ${esc(entry?.score||r.score||`${r.gf}-${r.ga}`)}</h3>
+  <div class="data-grid">
+   <div class="data-cell"><span>Formações</span><b>${esc(r.myFormation)} × ${esc(r.oppFormation)}</b></div>
+   <div class="data-cell"><span>Posse</span><b>${esc(st.myPossession)} × ${esc(st.oppPossession)}</b></div>
+   <div class="data-cell"><span>Remates</span><b>${esc(st.myShots)} × ${esc(st.oppShots)}</b></div>
+   <div class="data-cell"><span>Faltas</span><b>${esc(st.myFouls)} × ${esc(st.oppFouls)}</b></div>
+   <div class="data-cell"><span>🟨</span><b>${esc(st.myYellowCards)} × ${esc(st.oppYellowCards)}</b></div>
+   <div class="data-cell"><span>🟥</span><b>${esc(st.myRedCards)} × ${esc(st.oppRedCards)}</b></div>
+  </div>
+  <div class="learning-box"><b>🧠 Aprendizado registrado</b><p>${esc(entry?.learning||'Resultado e tática adicionados ao histórico de aprendizado.')}</p></div>
+  <div class="quick-position"><label>Posição após o jogo<input id="videoResultPosition" type="number" min="1" value="${esc(s.myTeam?.leaguePosition||'')}"></label><button class="btn secondary" onclick="savePostResultPositionV70()">Salvar posição</button></div>
+  <p class="good-text small">Concluído. Este jogo não será pedido novamente.</p>
+ </div>`;
+}
+
+function normalizeCalendarMatchV54(x){
+ const outcome=['V','D','E'].includes(String(x.outcome||'').toUpperCase())?String(x.outcome).toUpperCase():null;
+ const opponent=isPlausibleOpponentV70(x.opponent)?x.opponent:null;
+ const hasOpponent=x.hasOpponent===false?false:!!opponent;
+ return {
+  sequence:Number(x.sequence)||null,round:x.round??null,opponent,hasOpponent,
+  competitionType:x.competitionType==='cup'?'cup':'league',venue:x.venue==='Casa'?'Casa':'Fora',
+  dateText:x.dateText||null,timeText:x.timeText||null,result:x.result||null,outcome,
+  played:!!x.played||!!outcome||!!x.result,conditional:!!x.conditional,skipped:false,dateTime:null,calendarAnchored:false
+ };
+}
+async function analyzeCalendarFramesV54(frames,slotNumber){
+ const s=state.slots[slotNumber-1];
+ const parts=[{text:`Leia o CALENDÁRIO do OSM 26.
+Extraia a data real da primeira rodada do próprio vídeo; nunca use data de upload.
+REGRAS:
+- casinha = Casa; sem casinha = Fora;
+- taça = cup; sem taça = league;
+- V/D/E ou placar = já jogado;
+- se uma posição futura de TAÇA estiver VAZIA, sem escudo e sem nome de adversário, retorne hasOpponent=false e opponent=null;
+- se estiver vazia e a data já tiver passado, significa que essa fase NÃO FOI DISPUTADA pelo usuário; não invente adversário;
+- NÃO transforme texto aleatório/OCR ruim em nome de time;
+- preserve ordem das partidas.
+JSON: {"firstRoundDateText":null,"firstRoundTimeText":null,"matches":[{"sequence":1,"round":null,"opponent":null,"hasOpponent":false,"competitionType":"league|cup","venue":"Casa|Fora","dateText":null,"timeText":null,"result":null,"outcome":"V|D|E|null","played":false,"conditional":false}]}
+Contexto: ${JSON.stringify({team:s.teamName,competition:s.competitionName,defaultMatchTime:s.defaultMatchTime})}`}];
+ for(const f of frames)parts.push({inlineData:{mimeType:f.mimeType,data:f.base64}});
+ return geminiJson(parts,{temperature:.01,maxOutputTokens:9000});
+}
+function sanitizeScheduleV70(s){
+ const now=Date.now();
+ for(const row of s.schedule||[]){
+   if(row.competitionType==='cup'&&!isPlausibleOpponentV70(row.opponent)){row.opponent=null;row.hasOpponent=false}
+   if(row.competitionType==='cup'&&row.hasOpponent===false&&row.dateTime&&new Date(row.dateTime).getTime()<=now){
+     row.skipped=true;row.played=false;row.result=null;row.outcome=null;
+   }
+ }
+}
+function latestPendingResultRow(s){
+ sanitizeScheduleV70(s);
+ const rows=(s.schedule||[]).map((x,i)=>({...x,_i:i})).filter(x=>
+   !x.result&&!x.played&&!x.skipped&&x.hasOpponent!==false&&isPlausibleOpponentV70(x.opponent)&&x.dateTime&&new Date(x.dateTime).getTime()<=Date.now()
+ );
+ rows.sort((a,b)=>new Date(b.dateTime)-new Date(a.dateTime));return rows[0]||null;
+}
+function nextFutureRow(s){
+ sanitizeScheduleV70(s);
+ return (s.schedule||[]).filter(x=>!x.result&&!x.played&&!x.skipped&&x.dateTime&&new Date(x.dateTime).getTime()>Date.now()).sort((a,b)=>new Date(a.dateTime)-new Date(b.dateTime))[0]||null;
+}
+function setCalendarOpponentV70(n,i){
+ const s=state.slots[n-1],row=s.schedule?.[i];if(!row)return;
+ openModal(`<h2>Definir adversário</h2><p class="muted">${row.competitionType==='cup'?'Taça':'Liga'} · ${esc(calendarDateLabelV67(row,s))}</p><div class="form-card"><label>Adversário<input id="cupOpponentName" placeholder="Nome do time"></label><button class="btn" onclick="saveCalendarOpponentV70(${n},${i})">Salvar</button><button class="btn secondary" onclick="closeModal();openCalendarForSlot(${n})">Ler calendário novamente</button></div>`)
+}
+function saveCalendarOpponentV70(n,i){
+ const s=state.slots[n-1],row=s.schedule?.[i],name=document.getElementById('cupOpponentName')?.value.trim();
+ if(!row||!isPlausibleOpponentV70(name)){toast('Informe um adversário válido');return}
+ row.opponent=name;row.hasOpponent=true;row.skipped=false;s.updatedAt=nowIso();saveState();closeModal();renderInfo();renderToday();toast('Adversário salvo')
+}
+function calendarStatusV54(x,s,i){
+ const out=calendarOutcomeV55(x);
+ if(x.result)return `<span class="calendar-result ${out==='V'?'win':out==='D'?'loss':'draw'}"><b>${esc(out||'')}</b> · ${esc(x.result)}</span>`;
+ if(x.played)return `<span class="calendar-result ${out==='V'?'win':out==='D'?'loss':'draw'}"><b>${esc(out||'J')}</b></span>`;
+ if(x.skipped)return `<span class="muted">Não disputado</span>`;
+ if(x.competitionType==='cup'&&x.hasOpponent===false){
+   if(x.dateTime&&new Date(x.dateTime).getTime()<=Date.now())return `<span class="muted">Fase não disputada</span>`;
+   return `<button class="btn tiny secondary" onclick="setCalendarOpponentV70(${s.slotNumber},${i})">Adversário a definir</button>`;
+ }
+ if(!x.calendarDateIso&&!x.dateTime)return `<span class="muted">Data não identificada</span>`;
+ if(x.dateTime&&new Date(x.dateTime).getTime()<=Date.now())return x.tacticSnapshot?`<button class="btn tiny danger" onclick="openResultVideoV70(${s.slotNumber},${i})">Vídeo do resultado</button>`:`<span class="warn-text">Horário passou · sem tática registrada</span>`;
+ return `<span class="future-label">Agendado</span>`;
+}
+function calendarTableHtml(s){
+ sanitizeScheduleV70(s);const rows=s.schedule||[];
+ if(!rows.length)return '<p class="muted">Calendário ainda não lido.</p>';
+ return `<div class="calendar-list">${rows.map((x,i)=>{
+  const overdue=!x.played&&!x.result&&!x.skipped&&x.hasOpponent!==false&&x.dateTime&&new Date(x.dateTime).getTime()<=Date.now();
+  return `<div class="calendar-row ${overdue?'overdue':''} ${x.skipped?'skipped':''}">
+   <div class="calendar-main"><b>${x.competitionType==='cup'?'🏆':'⚽'} ${esc(x.opponent||'Adversário a definir')}</b><span>${esc(x.venue||'NI')} · ${x.round!=null?'Rodada '+esc(x.round):'Rodada NI'}</span></div>
+   <div class="calendar-when"><b>${esc(calendarDateLabelV67(x,s))}</b></div><div class="calendar-status">${calendarStatusV54(x,s,i)}</div>
+  </div>`}).join('')}</div>`;
+}
+
+function rosterDiffV70(prev,next){
+ const used=new Set(),added=[],removed=[],improved=[],trainingStarted=[],trainingStopped=[];
+ for(const p of next){
+  const i=prev.findIndex((q,j)=>!used.has(j)&&sameRosterPlayerV57(q,p));
+  if(i<0){added.push(p);continue}
+  used.add(i);const q=prev[i],a=Number(q.rating),b=Number(p.rating);
+  if(Number.isFinite(a)&&Number.isFinite(b)&&b>a)improved.push({name:p.name,from:a,to:b});
+  if(!q.training&&p.training)trainingStarted.push(p);
+  if(q.training&&!p.training)trainingStopped.push(p);
+ }
+ prev.forEach((p,i)=>{if(!used.has(i))removed.push(p)});
+ return {added,removed,improved,trainingStarted,trainingStopped};
+}
+function applyRosterSnapshotV70(s,c){
+ const prev=structuredClone(s.roster||[]);
+ const expected=Number(c.myTeam?.playerCount)||null;
+ let next=dedupeRosterV57((c.roster||[]).map(p=>({...p,sector:normalizeRosterSectorV55(p),training:p.training===true})),expected);
+ if(expected&&next.length<Math.max(6,Math.floor(expected*.65))){
+   s.rosterReadWarning=`Leitura incompleta: ${next.length}/${expected} jogadores. O elenco anterior foi mantido.`;
+   return false;
+ }
+ s.rosterReadWarning=null;s.roster=next;s.myTeam=mergeNonNull(s.myTeam,c.myTeam||{});s.myTeam.playerCount=next.length;recalculateSquadValue(s);
+ const diff=rosterDiffV70(prev,next),snapshot={at:nowIso(),count:next.length,squadValue:s.myTeam.squadValue,diff};
+ s.rosterSnapshots=s.rosterSnapshots||[];s.rosterSnapshots.push(snapshot);if(s.rosterSnapshots.length>30)s.rosterSnapshots=s.rosterSnapshots.slice(-30);
+ s.lastRosterChanges=diff;s.lastRosterSnapshotAt=snapshot.at;
+ if(s.marketStrategyAI)s.marketPlanStale=true;
+ return true;
+}
+
+function applyVisionResult(result){
+ const mode=activeAnalysisJobV54?.mode||analysisMode;
+ for(const c of result.captures||[]){
+  const n=resolveCaptureSlot(c);if(!n)continue;const s=state.slots[n-1];s.status='active';s.createdAt=s.createdAt||nowIso();s.updatedAt=nowIso();
+  for(const k of ['teamName','competitionName','competitionType','round','totalRounds'])if(c[k]!==null&&c[k]!==undefined&&c[k]!=='')s[k]=c[k];
+  if(mode==='market'){
+    applyRosterSnapshotV70(s,c);s.market=[];s.coverage={...s.coverage,squad:true,training:true};
+  }else{
+    s.myTeam=mergeNonNull(s.myTeam,c.myTeam||{});s.opponent=mergeNonNull(s.opponent,c.opponent||{});s.match=mergeNonNull(s.match,c.match||{});
+    if(Array.isArray(c.roster)&&c.roster.length)s.roster=mergePlayers(s.roster,c.roster);
+    if(mode==='tactic'){
+      const opp=c.opponent?.teamName||s.opponent.teamName;
+      if(opp){s.opponentAnalysisFor=opp;s.lastOpponentAnalysisAt=nowIso()}
+      s.analysisHistory=s.analysisHistory||[];s.analysisHistory.push({at:nowIso(),opponent:opp,human:s.opponent.human,manager:s.opponent.manager,myOverall:s.myTeam.overall,oppOverall:s.opponent.overall,formation:s.opponent.formation,style:s.opponent.style,marking:s.opponent.marking,offside:s.opponent.offside});
+      if(s.analysisHistory.length>40)s.analysisHistory=s.analysisHistory.slice(-40);
+    }
+  }
+  s.coverage={...s.coverage,...Object.fromEntries((c.screensSeen||[]).map(x=>[x,true]))};s.missing=buildMissing(s,c.missing||[]);
+ }
+}
+
+function changesHtmlV70(s){
+ const d=s.lastRosterChanges;if(!d)return `<p class="muted">Envie um novo vídeo do elenco. A partir do segundo vídeo, o app detecta automaticamente compras, saídas, evolução e mudanças no treino.</p>`;
+ const blocks=[];
+ if(d.added.length)blocks.push(`<div class="change-block good"><b>Entraram (${d.added.length})</b><span>${d.added.map(x=>esc(x.name)).join(', ')}</span></div>`);
+ if(d.removed.length)blocks.push(`<div class="change-block warn"><b>Saíram (${d.removed.length})</b><span>${d.removed.map(x=>esc(x.name)).join(', ')}</span></div>`);
+ if(d.improved.length)blocks.push(`<div class="change-block good"><b>Evoluíram</b><span>${d.improved.map(x=>`${esc(x.name)} ${x.from}→${x.to}`).join(', ')}</span></div>`);
+ if(d.trainingStarted.length||d.trainingStopped.length)blocks.push(`<div class="change-block"><b>Treino mudou</b><span>${d.trainingStarted.length?'Entraram: '+d.trainingStarted.map(x=>esc(x.name)).join(', '):''}${d.trainingStarted.length&&d.trainingStopped.length?' · ':''}${d.trainingStopped.length?'Saíram: '+d.trainingStopped.map(x=>esc(x.name)).join(', '):''}</span></div>`);
+ return blocks.join('')||`<p class="muted">Nenhuma mudança relevante detectada desde o último vídeo.</p>`;
+}
+function persistentStrategyHtmlV57(s){
+ const p=s.marketStrategyAI;if(!p)return `<div class="card"><div class="market-head"><div><span class="eyebrow">PLANO IA</span><h3>Ainda não gerado</h3><p class="muted small">O plano usa seu elenco atual, histórico de evolução e evento ativo.</p></div><button class="btn" onclick="aiStrategyReview(${s.slotNumber})">Gerar plano</button></div></div>`;
+ return `<div class="card market-ai-plan"><div class="market-head"><div><span class="eyebrow">PLANO IA SALVO</span><h3>Estratégia atual</h3><p class="tiny muted">Gerado em ${fmtDateTime(p.generatedAt)} ${s.marketPlanStale?'· elenco mudou depois deste plano':''}</p></div><button class="btn secondary" onclick="aiStrategyReview(${s.slotNumber})">Gerar novo plano</button></div><p>${esc(p.summary)}</p><div class="plan-list">${(p.actions||[]).map((a,i)=>`<div class="plan-step"><span class="n">${esc(a.priority||i+1)}</span><div><b>${esc(a.player?`${a.player}: ${a.action}`:a.action)}</b><div class="small muted">${esc(a.why)}</div></div></div>`).join('')}</div>${(p.training||[]).length?`<h4>Próximos treinos</h4>${p.training.map(x=>`<div class="plan-step"><span class="n">🏋</span><div><b>${esc(x.player)}</b><div class="small muted">${esc(x.why)}</div></div></div>`).join('')}`:''}${(p.buyProfiles||[]).length?`<h4>Perfil de compra</h4>${p.buyProfiles.map(x=>`<div class="plan-step"><span class="n">+</span><div><b>${esc(x.position)} · OVR ${esc(x.minimumRating)}+</b><div class="small muted">${esc(x.age)} · ${esc(x.budgetRule)} · ${esc(x.why)}</div></div></div>`).join('')}`:''}</div>`;
+}
+function renderMarket(){
+ const s=state.slots[selectedSlot-1];if(!s||s.status!=='active'){els.marketContent.innerHTML=`<div class="card"><p class="muted">Slot ${selectedSlot} livre.</p></div>`;return}
+ finalizeRosterSnapshotV57(s);const c=rosterCounts(s),training=(s.roster||[]).filter(x=>x.training);
+ els.marketContent.innerHTML=`${eventIntelHtml(state.eventIntel||localEventIntel())}
+ ${persistentStrategyHtmlV57(s)}
+ <div class="card evolution-dashboard"><div class="market-head"><div><span class="eyebrow">FONTE DA VERDADE</span><h3>Elenco atual · ${esc(s.teamName)}</h3><p class="muted small">Atualize apenas com vídeo do elenco quando quiser sincronizar mudanças.</p></div><button class="btn" onclick="openMarketSnapshot(${selectedSlot})">Atualizar elenco por vídeo</button></div>
+ <div class="kpis"><div class="kpi"><span>Jogadores</span><b>${esc(s.roster.length)}</b></div><div class="kpi"><span>Valor</span><b>${fmtMoney(s.myTeam.squadValue)}</b></div><div class="kpi"><span>ATA/MEI/DEF/GOL</span><b>${c.ATA}/${c.MEI}/${c.DEF}/${c.GOL}</b></div><div class="kpi"><span>Treinando agora</span><b>${training.length}</b></div></div>${s.rosterReadWarning?`<p class="warn-text">${esc(s.rosterReadWarning)}</p>`:''}</div>
+ <div class="card"><h3>O que mudou desde o último vídeo</h3>${changesHtmlV70(s)}</div>
+ <div class="card"><h3>Treinamento atual</h3>${training.length?training.map(p=>`<div class="history-line"><div><b>🟠 ${esc(p.name)}</b><span>${esc(p.position)} · OVR ${esc(p.rating)} · ${esc(p.age)} anos</span></div></div>`).join(''):'<p class="muted">Nenhuma camisa laranja detectada no último vídeo.</p>'}</div>
+ <div class="card"><h3>Elenco completo</h3>${playerTableHtml(s)}</div>`;
+}
+
+async function aiStrategyReview(n,silent=false){
+ const s=state.slots[n-1];if(!localStorage.getItem(API_KEY_STORAGE)){if(!silent)apiModal();return}
+ finalizeRosterSnapshotV57(s);const roster=(s.roster||[]).map(p=>({name:p.name,sector:p.sector,position:p.position,rating:p.rating,value:p.value,age:p.age,training:!!p.training}));
+ if(!roster.length){toast('Primeiro envie o vídeo do seu elenco');return}
+ if(!silent)toast('Analisando evolução do elenco…');
+ const prompt=`Você é um coach de evolução de elenco no OSM. Use APENAS o roster real abaixo. O mercado muda constantemente, então NÃO invente jogadores disponíveis. Para compras, dê PERFIS. Para venda/treino por nome, use somente nomes do roster.
+Objetivo: elevar força do XI e valor do elenco rápido, com caixa girando, treino eficiente e adaptação ao evento atual.
+Considere mudanças detectadas entre snapshots, jogadores que já estão treinando, equilíbrio 4 ATA / 6 MEI / 6 DEF / 2 GOL e até 4 vendas simultâneas.
+Retorne JSON {"summary":"","actions":[{"priority":1,"type":"sell|train|buy_profile|keep","player":null,"action":"","why":""}],"training":[{"player":"","why":""}],"buyProfiles":[{"position":"","minimumRating":null,"age":"","budgetRule":"","why":""}]}.
+Dados: ${JSON.stringify({overall:s.myTeam.overall,squadValue:s.myTeam.squadValue,roster,lastChanges:s.lastRosterChanges,snapshots:(s.rosterSnapshots||[]).slice(-5),event:state.eventIntel})}`;
+ try{const p=await geminiJson([{text:prompt}],{temperature:.05,maxOutputTokens:4200});s.marketStrategyAI={...p,generatedAt:nowIso()};s.marketPlanStale=false;s.marketStrategyHistory=s.marketStrategyHistory||[];s.marketStrategyHistory.push(structuredClone(s.marketStrategyAI));if(s.marketStrategyHistory.length>20)s.marketStrategyHistory=s.marketStrategyHistory.slice(-20);saveState();renderMarket();if(!silent)toast('Plano atualizado e salvo')}catch(e){if(!silent)toast(e.message)}
+}
+
+function renderAnalysisMode(){
+ if(!els.analysisGuide)return;const tactic=analysisMode==='tactic',squad=analysisMode==='market',calendar=analysisMode==='calendar',result=analysisMode==='result';
+ els.uploadTitle.textContent=tactic?'Enviar vídeo da partida':squad?'Enviar vídeo do meu elenco':calendar?'Enviar vídeo do calendário':'Enviar vídeo do resultado';
+ els.uploadHelp.textContent=tactic?'O app exige as 6 categorias obrigatórias.':squad?'Grave SOMENTE o elenco completo. O app compara com o vídeo anterior e detecta mudanças.':calendar?'Placar=jogado; 🏠=casa; sem casa=fora; 🏆=taça.':'Grave o relatório completo do jogo; ao terminar, o resultado já será salvo.';
+ els.autoTacticRow.classList.toggle('hidden',!tactic);
+ if(tactic)els.analysisGuide.innerHTML=`<h3>Obrigatório para gerar tática</h3><p class="warn-text small"><b>Sem todas as 6 categorias, não gera.</b></p>`;
+ else if(squad)els.analysisGuide.innerHTML=`<h3>Sincronizar elenco</h3><p class="muted">Um vídeo do elenco substitui o estado anterior: treino não fica fixo. O app detecta entradas, saídas, evolução e quem está treinando agora.</p>`;
+ else if(calendar)els.analysisGuide.innerHTML=`<h3>Calendário</h3><div class="guide-grid"><div><b>🏠 Casa</b></div><div><b>🏆 Taça</b></div><div><b>V / E / D</b></div><div><b>Vazio em taça</b><span>fase não disputada ou adversário ainda não definido</span></div></div>`;
+ else els.analysisGuide.innerHTML=`<h3>Resultado por vídeo</h3><p class="muted">Placar, posse, remates, faltas, cartões, formações e eventos. Ao concluir, o jogo é fechado e entra no aprendizado.</p>`;
+}
+
+function chooseNextAction(){
+ const s=state.slots[selectedSlot-1];if(!s||s.status!=='active')return null;
+ sanitizeScheduleV70(s);
+ const late=latestPendingResultRow(s);
+ if(late)return {slot:s,title:`Registrar resultado contra ${late.opponent}`,detail:`Jogo de ${fmtDateTime(late.dateTime)} já passou.`,button:`<button class="btn danger" onclick="openResultVideoV70(${s.slotNumber},${late._i})">Enviar vídeo do resultado</button>`};
+ const next=nextFutureRow(s);
+ if(next){
+   if(next.competitionType==='cup'&&next.hasOpponent===false)return {slot:s,title:'Adversário da taça ainda não definido',detail:`${calendarDateLabelV67(next,s)}. Digite quando souber ou releia o calendário.`,button:`<button class="btn" onclick="setCalendarOpponentV70(${s.slotNumber},${s.schedule.indexOf(next)})">Definir adversário</button><button class="btn secondary" onclick="openCalendarForSlot(${s.slotNumber})">Atualizar calendário</button>`};
+   const currentAnalysis=hasCurrentOpponentAnalysisV70(s);
+   if(!currentAnalysis)return {slot:s,title:`Próximo: ${next.opponent||'adversário a definir'}`,detail:`${calendarDateLabelV67(next,s)} · ${next.venue||'Local NI'} · análise do rival ainda não feita.`,button:`<button class="btn" onclick="openTacticVideoRefreshV59(${s.slotNumber})">Analisar adversário</button>`};
+   const ms=new Date(next.dateTime).getTime()-Date.now();
+   if(ms<=settings.notifyMinutes*60000&&ms>0)return {slot:s,title:`Revisar tática${s.opponent.human===true?' contra humano':''}`,detail:`Faltam ${countdown(next.dateTime)}.`,button:`<button class="btn" onclick="refreshTacticFromSavedDataV59(${s.slotNumber})">Recalcular agora</button><button class="btn secondary" onclick="openTacticVideoRefreshV59(${s.slotNumber})">Vídeo novo</button>`};
+   if(!s.tactic)return {slot:s,title:`Gerar tática para ${next.opponent}`,detail:`Rival analisado · ${calendarDateLabelV67(next,s)}`,button:`<button class="btn" onclick="refreshTacticFromSavedDataV59(${s.slotNumber})">Gerar tática</button>`};
+ }
+ return null;
+}
+function slotCardHtml(s){
+ const active=s.status==='active',selected=s.slotNumber===selectedSlot,next=nextFutureRow(s),analysis=hasCurrentOpponentAnalysisV70(s);
+ return `<article class="slot-card ${selected?'selected-slot':''}" onclick="if(event.target.tagName!=='BUTTON')setSelectedSlot(${s.slotNumber})"><div class="slot-top"><div><div class="slot-num">SLOT ${s.slotNumber}${s.competitionType==='Batalha'?' · BATALHA':''}</div><div class="slot-team">${esc(s.teamName||'Slot disponível')}</div><div class="slot-comp">${esc(s.competitionName||'Sem competição')}</div></div><span class="status-pill">${active?(s.tactic?'Tática pronta':'Ativo'):'Livre'}</span></div>${active?`<div class="matchline"><b>${esc(next?.opponent||s.opponent.teamName||'Adversário a definir')}</b><div class="small muted">${esc(next?.venue||s.match.venue||'Local NI')} · ${next?.dateTime?esc(calendarDateLabelV67(next,s)):'Horário NI'}</div></div><div class="kpis"><div class="kpi"><span>Minha força</span><b>${esc(s.myTeam.overall)}</b></div><div class="kpi"><span>Força rival</span><b>${esc(opponentStrengthTextV70(s))}</b></div><div class="kpi"><span>Rival</span><b>${esc(opponentAnalysisBadgeV70(s))}</b></div><div class="kpi"><span>Tática</span><b>${s.tactic?'Pronta':'—'}</b></div></div><div class="actions">${!analysis?`<button class="btn" onclick="event.stopPropagation();openTacticVideoRefreshV59(${s.slotNumber})">Analisar rival</button>`:s.tactic?`<button class="btn" onclick="event.stopPropagation();refreshTacticFromSavedDataV59(${s.slotNumber})">Atualizar tática</button>`:`<button class="btn" onclick="event.stopPropagation();refreshTacticFromSavedDataV59(${s.slotNumber})">Gerar tática</button>`}</div>`:`<div class="actions"><button class="btn" onclick="event.stopPropagation();setSelectedSlot(${s.slotNumber});configureSlot(${s.slotNumber})">Criar competição</button></div>`}</article>`;
+}
+function persistentTacticHtml(s){
+ if(!s||s.status!=='active')return '';
+ const late=latestPendingResultRow(s);if(late)return `<div class="card tactic-persistent overdue"><span class="eyebrow">RESULTADO PENDENTE</span><h3>${esc(s.teamName)} × ${esc(late.opponent)}</h3><p class="danger-text small">${esc(fmtDateTime(late.dateTime))}</p><button class="btn danger" onclick="openResultVideoV70(${s.slotNumber},${late._i})">Enviar vídeo do resultado</button></div>`;
+ const next=nextFutureRow(s);if(!next)return '';
+ if(next.competitionType==='cup'&&next.hasOpponent===false)return `<div class="card tactic-persistent"><span class="eyebrow">PRÓXIMO COMPROMISSO</span><h3>Taça · adversário a definir</h3><p class="muted">${esc(calendarDateLabelV67(next,s))}</p></div>`;
+ if(!hasCurrentOpponentAnalysisV70(s))return `<div class="card tactic-persistent"><span class="eyebrow">PRÓXIMO ADVERSÁRIO</span><h3>${esc(next.opponent||'A definir')}</h3><p class="muted">${esc(calendarDateLabelV67(next,s))} · ainda sem análise do rival</p><button class="btn" onclick="openTacticVideoRefreshV59(${s.slotNumber})">Analisar adversário</button></div>`;
+ return s.tactic?`<div class="card tactic-persistent"><span class="eyebrow">TÁTICA ATUAL · SLOT ${s.slotNumber}</span><h3>${esc(s.teamName)} × ${esc(s.opponent.teamName)}</h3>${tacticVisualHtmlV60(s.tactic)}<div class="actions"><button class="btn" onclick="refreshTacticFromSavedDataV59(${s.slotNumber})">Recalcular</button><button class="btn secondary" onclick="openTacticVideoRefreshV59(${s.slotNumber})">Vídeo novo</button></div></div>`:`<div class="card tactic-persistent"><span class="eyebrow">RIVAL ANALISADO</span><h3>${esc(s.opponent.teamName)}</h3><button class="btn" onclick="refreshTacticFromSavedDataV59(${s.slotNumber})">Gerar tática</button></div>`;
+}
+
+function renderHistory(){
+ const s=state.slots[selectedSlot-1];if(!s){els.historyContent.innerHTML='';return}
+ const games=s.results||[],analyses=s.analysisHistory||[],snaps=s.rosterSnapshots||[],plans=s.marketStrategyHistory||[],pos=s.positionHistory||[],archives=state.archives.filter(a=>Number(a.slotNumber)===selectedSlot);
+ const w=games.filter(r=>r.gf>r.ga).length,d=games.filter(r=>r.gf===r.ga).length,l=games.filter(r=>r.gf<r.ga).length;
+ const gamesHtml=games.length?games.slice().reverse().map(r=>`<div class="history-match"><div class="history-match-main"><b>${esc(s.teamName)} ${esc(r.score)} ${esc(r.opponent)}</b><span>${fmtDateTime(r.createdAt)} · ${r.context?.opponentHuman===true?'👤 Humano':r.context?.opponentHuman===false?'🤖 CPU':'Tipo NI'} · ${esc(r.context?.venue||'')}</span></div><div class="history-match-meta"><span>Força ${esc(r.context?.myOverall??'NI')} × ${esc(r.context?.oppOverall??'NI')}</span><span>Rival ${esc(r.context?.oppFormation||'Formação NI')}</span><span>${esc(r.tactic?.formation||'')} · ${esc(r.tactic?.gamePlan||'')}</span></div><p class="tiny muted">🧠 ${esc(r.learning||deriveLearningV70(r))}</p></div>`).join(''):'<p class="muted">Nenhum jogo registrado.</p>';
+ const analysisHtml=analyses.length?analyses.slice(-10).reverse().map(a=>`<div class="history-line"><div><b>${esc(a.opponent||'Rival')}</b><span>${fmtDateTime(a.at)} · ${a.human===true?'Humano':a.human===false?'CPU':'NI'} · força ${esc(a.myOverall)}×${esc(a.oppOverall)} · ${esc(a.formation)} / ${esc(a.style)}</span></div></div>`).join(''):'<p class="muted">Nenhuma análise salva.</p>';
+ const snapHtml=snaps.length?snaps.slice(-10).reverse().map(x=>`<div class="history-line"><div><b>Elenco sincronizado</b><span>${fmtDateTime(x.at)} · ${x.count} jogadores · ${fmtMoney(x.squadValue)}</span></div><strong>${(x.diff?.improved||[]).length?`+${x.diff.improved.length} evoluções`:''}</strong></div>`).join(''):'<p class="muted">Nenhum snapshot do elenco.</p>';
+ const posHtml=pos.length?`<div class="position-chart">${pos.slice(-20).map(x=>{const p=Number(x.position)||20,h=Math.max(10,100-(p-1)*(85/19));return `<div class="pos-col"><div class="pos-bar" style="height:${h}%"><span>${p}º</span></div><small>R${esc(x.round??'')}</small></div>`}).join('')}</div>`:'<p class="muted">Sem evolução de posição.</p>';
+ const plansHtml=plans.length?plans.slice(-5).reverse().map(p=>`<div class="history-line"><div><b>Plano IA de evolução</b><span>${fmtDateTime(p.generatedAt)} · ${esc(p.summary)}</span></div></div>`).join(''):'<p class="muted">Nenhum plano anterior.</p>';
+ const archiveHtml=archives.length?archives.map(a=>`<div class="history-line"><div><b>${esc(a.competitionName)}</b><span>${esc(a.teamName)} · ${(a.results||[]).length} jogos · ${fmtDateTime(a.finishedAt)}</span></div></div>`).join(''):'<p class="muted">Nenhuma competição finalizada.</p>';
+ els.historyContent.innerHTML=`<div class="card"><span class="eyebrow">SLOT ${selectedSlot}</span><h3>Histórico completo</h3><div class="kpis"><div class="kpi"><span>Jogos</span><b>${games.length}</b></div><div class="kpi"><span>V/E/D</span><b>${w}/${d}/${l}</b></div><div class="kpi"><span>Análises</span><b>${analyses.length}</b></div><div class="kpi"><span>Elencos</span><b>${snaps.length}</b></div></div></div>${historySectionV57('Partidas e táticas usadas',gamesHtml)}${historySectionV57('Análises dos adversários',analysisHtml)}${historySectionV57('Evolução do elenco',snapHtml)}${historySectionV57('Evolução da posição',posHtml)}${historySectionV57('Planos IA anteriores',plansHtml)}${historySectionV57('Competições finalizadas',archiveHtml)}`;
+}

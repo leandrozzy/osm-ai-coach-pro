@@ -7,7 +7,7 @@
   <meta name="description" content="OSM AI Coach Pro — análise por vídeo, táticas, mercado e histórico para 4 slots." />
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" href="icon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="styles.css?v=6.7.0" />
+  <link rel="stylesheet" href="styles.css?v=7.0.0" />
   <title>OSM AI Coach Pro</title>
 </head>
 <body>
@@ -16,7 +16,7 @@
       <div class="logo" aria-hidden="true"><span class="logo-ring"></span><span class="logo-field"></span><span class="logo-ball">⚽</span><span class="logo-chip">AI</span></div>
       <div>
         <h1>OSM AI Coach Pro</h1>
-        <p>Cloud · v6.7 · 4 slots</p>
+        <p>Cloud · v7.0 · 4 slots</p>
       </div>
     </div>
     <button id="apiButton" class="btn secondary">API Gemini</button>
@@ -25,7 +25,7 @@
   <nav class="tabs" aria-label="Navegação principal">
     <button class="tab active" data-view="today">Hoje</button>
     <button class="tab" data-view="analyze">Analisar</button>
-    <button class="tab" data-view="market">Mercado</button>
+    <button class="tab" data-view="market">Evolução</button>
     <button class="tab" data-view="history">Histórico</button>
     <button class="tab" data-view="info">Informações</button>
     <button class="tab" data-view="settings">Config</button>
@@ -53,7 +53,7 @@
         <button class="mode-btn active" data-analysis-mode="tactic"><b>⚽ Gerar tática</b><span>Partida, adversário e Data Analyst</span></button>
         <button class="mode-btn" data-analysis-mode="market"><b>👥 Elenco</b><span>Seu elenco, valores e treinamento</span></button>
         <button class="mode-btn" data-analysis-mode="calendar"><b>📅 Calendário</b><span>Próximos jogos e horários</span></button>
-        <button class="mode-btn" data-analysis-mode="result"><b>📊 Resultado</b><span>Placar, estatísticas e cartões</span></button>
+        <button class="mode-btn" data-analysis-mode="result"><b>📹 Resultado</b><span>Vídeo do jogo, estatísticas e aprendizado</span></button>
       </div>
       <div class="card analyze-card">
         <div class="upload-zone" id="uploadZone">
@@ -85,7 +85,7 @@
     </section>
 
     <section id="view-market" class="view">
-      <div class="section-head"><div><span class="eyebrow">MERCADO</span><h2>Plano de evolução</h2></div><button id="updateEvents" class="btn secondary">Atualizar eventos</button></div>
+      <div class="section-head"><div><span class="eyebrow">ELENCO & EVOLUÇÃO</span><h2>Central de evolução</h2></div><button id="updateEvents" class="btn secondary">Atualizar eventos</button></div>
       <div id="marketContent"></div>
     </section>
 
@@ -133,6 +133,6 @@
   if ('serviceWorker' in navigator) navigator.serviceWorker.getRegistrations().then(rs=>rs.forEach(r=>r.unregister())).catch(()=>{});
   if ('caches' in window) caches.keys().then(keys=>Promise.all(keys.map(k=>caches.delete(k)))).catch(()=>{});
   </script>
-  <script src="app.js?v=6.7.0"></script>
+  <script src="app.js?v=7.0.0"></script>
 </body>
 </html>
