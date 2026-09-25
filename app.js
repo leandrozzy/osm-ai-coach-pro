@@ -1,6 +1,6 @@
 'use strict';
 
-const V2_VERSION = '2.3.0';
+const V2_VERSION = '2.3.1';
 const STATE_KEY = 'osm_ai_coach_pro_v2_state';
 const SETTINGS_KEY = 'osm_ai_coach_pro_v2_settings';
 const API_KEY_STORAGE = 'osm_ai_coach_pro_gemini_key';
@@ -1228,7 +1228,7 @@ function calendarTableHtml(rows){
       <td>${esc(x.venue)}</td>
       <td>${esc(x.opponent)}</td>
       <td>${esc(x.dateTime?fmtDate(x.dateTime):`${x.dateText||'NI'} ${x.timeText||''}`)}</td>
-      <td>${x.played?`<span class="result-badge ${String(x.outcome||'').toUpperCase()==='V'?'win':String(x.outcome||'').toUpperCase()==='E'?'draw':'loss'}">${esc(calendarOutcomeLabel(x))}</span>${x.result?` · ${esc(x.result)}`:''}`:x.skipped?'Ignorado':x.conditional?'Condicional':'Futuro'}</td>
+      <td>${x.placeholder?'Aguardando definição':x.played?`<span class="result-badge ${String(x.outcome||'').toUpperCase()==='V'?'win':String(x.outcome||'').toUpperCase()==='E'?'draw':'loss'}">${esc(calendarOutcomeLabel(x))}</span>${x.result?` · ${esc(x.result)}`:''}`:x.skipped?'Ignorado':x.conditional?'Condicional':'Futuro'}</td>
     </tr>`).join('')}</tbody>
   </table></div>`;
 }
@@ -1606,6 +1606,9 @@ Interprete obrigatoriamente: V = Vitória, E = Empate, D = Derrota.
 O círculo com V/E/D é a FONTE DE VERDADE e tem prioridade sobre qualquer inferência pelo placar.
 Nunca inverta o resultado por casa/fora: o placar do calendário está na perspectiva do meu time.
 Retorne outcome exatamente como V, E ou D quando aparecer.
+IMPORTANTE: card de Copa/Taça vazio, sem adversário definido, sem placar e sem V/E/D, NÃO é partida jogada.
+Nesse caso use played=false, outcome=null, result=null e conditional=true.
+Um card vazio de Copa nunca pode virar Vitória/Empate/Derrota.
 Extraia futuras e já jogadas.
 Retorne somente:
 {"matches":[{"round":null,"opponent":null,"competitionType":"league|cup|null","venue":"Casa|Fora|null","dateText":null,"timeText":null,"dateTime":null,"result":null,"outcome":"V|D|E|null","played":false,"conditional":false}]}`;
@@ -1708,18 +1711,55 @@ function v21ApplyRoster(data){
 
 function normalizeCalendarOutcomeRow(x){
   const y={...(x||{})};
+
+  const opponent=String(y.opponent||'').trim();
+  const result=String(y.result||'').trim();
   const out=String(y.outcome||'').toUpperCase().trim();
-  if(['V','E','D'].includes(out)){y.outcome=out;y.played=true;return y}
-  const m=String(y.result||'').match(/(\d+)\s*[-x:]\s*(\d+)/i);
-  if(m){
+  const competition=String(y.competitionType||'').toLowerCase();
+
+  const hasOpponent=!!opponent && !['ni','tbd','a definir','aguardando','?','-'].includes(opponent.toLowerCase());
+  const hasScore=/\d+\s*[-x:]\s*\d+/i.test(result);
+  const hasExplicitOutcome=['V','E','D'].includes(out);
+
+  // Regra crítica: card vazio de copa/taça é apenas placeholder condicional.
+  if((competition==='cup' || competition==='copa' || competition==='taça' || competition==='taca')
+     && !hasOpponent && !hasScore && !hasExplicitOutcome){
+    y.played=false;
+    y.outcome=null;
+    y.result=null;
+    y.conditional=true;
+    y.placeholder=true;
+    return y;
+  }
+
+  // Resultado explícito do OSM tem prioridade.
+  if(hasExplicitOutcome){
+    y.outcome=out;
+    y.played=true;
+    y.placeholder=false;
+    return y;
+  }
+
+  // Só deriva pelo placar quando existe placar real.
+  if(hasScore){
+    const m=result.match(/(\d+)\s*[-x:]\s*(\d+)/i);
     const a=Number(m[1]),b=Number(m[2]);
     y.outcome=a>b?'V':a===b?'E':'D';
     y.played=true;
+    y.placeholder=false;
+    return y;
+  }
+
+  y.played=!!y.played && hasOpponent;
+  y.placeholder=!hasOpponent;
+  if(y.placeholder && (competition==='cup'||competition==='copa'||competition==='taça'||competition==='taca')){
+    y.conditional=true;
+    y.played=false;
   }
   return y;
 }
 function calendarSummary(rows){
-  const done=(rows||[]).filter(x=>x.played);
+  const done=(rows||[]).filter(x=>x.played && !x.placeholder && ['V','E','D'].includes(String(x.outcome||'').toUpperCase()));
   return {
     v:done.filter(x=>String(x.outcome).toUpperCase()==='V').length,
     e:done.filter(x=>String(x.outcome).toUpperCase()==='E').length,
