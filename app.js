@@ -1,6 +1,6 @@
 'use strict';
 
-const V2_VERSION = '2.3.2';
+const V2_VERSION = '2.3.3';
 const STATE_KEY = 'osm_ai_coach_pro_v2_state';
 const SETTINGS_KEY = 'osm_ai_coach_pro_v2_settings';
 const API_KEY_STORAGE = 'osm_ai_coach_pro_gemini_key';
@@ -1555,19 +1555,78 @@ function checkNotifications(){
   if(!settings.notifyEnabled||Notification.permission!=='granted')return;
   for(const s of state.slots){if(s.status!=='active'||!s.match.nextMatchAt)continue;const d=new Date(s.match.nextMatchAt).getTime()-Date.now(),target=(settings.notifyMinutes||20)*60000;if(d>0&&d<=target&&!sessionStorage.getItem('notif_'+s.slotNumber+'_'+s.match.nextMatchAt)){new Notification(`OSM · Slot ${s.slotNumber}`,{body:`${s.teamName||'Seu time'} × ${s.opponent.teamName||'adversário'} em ${countdown(s.match.nextMatchAt)}`});sessionStorage.setItem('notif_'+s.slotNumber+'_'+s.match.nextMatchAt,'1')}}
 }
+function findV1StateInBrowser(){
+  const keys=[
+    ...OLD_KEYS,
+    'osm_ai_coach_pro_state_v52_clean',
+    'osm_ai_coach_pro_state_v52',
+    'osm_ai_coach_pro_state_v51',
+    'osm_ai_coach_pro_state_v50',
+    'osm_ai_coach_pro_state'
+  ];
+
+  for(const key of [...new Set(keys)]){
+    const raw=safeParse(localStorage.getItem(key),null);
+    if(!raw)continue;
+
+    const src =
+      Array.isArray(raw?.slots) ? raw :
+      Array.isArray(raw?.state?.slots) ? raw.state :
+      Array.isArray(raw?.data?.slots) ? raw.data :
+      null;
+
+    if(src?.slots?.length) return {key,src};
+  }
+  return null;
+}
+
+function openV1FilePicker(){
+  const input=$('v1ImportInput');
+  if(!input){
+    toast('Seletor de backup não encontrado');
+    return;
+  }
+
+  input.value='';
+
+  try{
+    // Melhor caminho no Chrome/Android atual
+    if(typeof input.showPicker==='function'){
+      input.showPicker();
+      return;
+    }
+  }catch(e){
+    console.warn('showPicker indisponível',e);
+  }
+
+  // Fallback compatível
+  try{
+    input.click();
+  }catch(e){
+    console.error(e);
+    toast('Não foi possível abrir os arquivos. Tente novamente.');
+  }
+}
+
 function migrateV1(){
-  const oldKey=OLD_KEYS.find(k=>localStorage.getItem(k));
-  if(oldKey){
-    const raw=safeParse(localStorage.getItem(oldKey),null);
-    if(raw?.slots){
-      importV1State(raw);
+  try{
+    const found=findV1StateInBrowser();
+
+    if(found){
+      importV1State(found.src);
       toast('Dados da V1 importados deste navegador');
       return;
     }
+
+    // Se não há estado antigo neste domínio, abre o arquivo de backup.
+    openV1FilePicker();
+  }catch(e){
+    console.error(e);
+    toast(e?.message||'Falha ao iniciar importação da V1');
   }
-  const input=$('v1ImportInput');
-  if(input){input.value='';input.click()}
 }
+window.migrateV1=migrateV1;
+
 function importV1State(raw){
   const src = raw?.state?.slots ? raw.state : (raw?.slots ? raw : (raw?.data?.slots ? raw.data : null));
   if(!src?.slots || !Array.isArray(src.slots)) throw new Error('Backup da V1 não reconhecido');
@@ -1604,9 +1663,29 @@ function importV1State(raw){
   renderAll();
 }
 async function importV1BackupFile(file){
-  if(!file) return;
-  const obj=JSON.parse(await file.text());
-  importV1State(obj);
+  if(!file){
+    toast('Nenhum arquivo selecionado');
+    return;
+  }
+
+  let obj;
+  try{
+    obj=JSON.parse(await file.text());
+  }catch{
+    throw new Error('O arquivo selecionado não é um backup JSON válido');
+  }
+
+  const src =
+    Array.isArray(obj?.slots) ? obj :
+    Array.isArray(obj?.state?.slots) ? obj.state :
+    Array.isArray(obj?.data?.slots) ? obj.data :
+    null;
+
+  if(!src?.slots){
+    throw new Error('Backup da V1 não reconhecido');
+  }
+
+  importV1State(src);
   toast('Backup da V1 convertido e importado com sucesso');
 }
 function exportBackup(){
@@ -1625,7 +1704,36 @@ function bind(){
   ['dragenter','dragover'].forEach(ev=>$('uploadZone').addEventListener(ev,e=>{e.preventDefault();$('uploadZone').classList.add('drag')}));
   ['dragleave','drop'].forEach(ev=>$('uploadZone').addEventListener(ev,e=>{e.preventDefault();$('uploadZone').classList.remove('drag')}));
   $('uploadZone').addEventListener('drop',e=>handleFiles([...e.dataTransfer.files]));
-  $('refreshBtn').onclick=()=>{renderAll();checkNotifications();toast('Atualizado')};$('saveSettingsBtn').onclick=saveSettingsUi;$('notifyBtn').onclick=requestNotifications;$('migrateBtn').onclick=migrateV1;$('v1ImportInput').onchange=async()=>{try{await importV1BackupFile($('v1ImportInput').files[0])}catch(e){toast(e.message)}};$('exportBtn').onclick=exportBackup;$('importInput').onchange=async()=>{try{await importBackup($('importInput').files[0])}catch(e){toast(e.message)}};
+  $('refreshBtn').onclick=()=>{renderAll();checkNotifications();toast('Atualizado')};
+  $('saveSettingsBtn').onclick=saveSettingsUi;
+  $('notifyBtn').onclick=requestNotifications;
+
+  const migrateBtn=$('migrateBtn');
+  const v1Input=$('v1ImportInput');
+
+  if(migrateBtn){
+    migrateBtn.onclick=(e)=>{
+      e.preventDefault();
+      e.stopPropagation();
+      migrateV1();
+    };
+  }
+
+  if(v1Input){
+    v1Input.onchange=async()=>{
+      try{
+        await importV1BackupFile(v1Input.files?.[0]);
+      }catch(e){
+        console.error(e);
+        toast(e?.message||'Falha ao importar backup da V1');
+      }finally{
+        v1Input.value='';
+      }
+    };
+  }
+
+  $('exportBtn').onclick=exportBackup;
+  $('importInput').onchange=async()=>{try{await importBackup($('importInput').files[0])}catch(e){toast(e.message)}};
   $('marketAnalyzeBtn').onclick=()=>{const s=selectedSlot();s.marketPlan=buildMarketPlan(s);saveState();renderMarket();toast('Plano recalculado')};
   if($('infoEditBtn'))$('infoEditBtn').onclick=infoEditModal;
 }
