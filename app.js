@@ -1,6 +1,6 @@
 'use strict';
 
-const V2_VERSION = '2.0.8';
+const V2_VERSION = '2.0.9';
 const STATE_KEY = 'osm_ai_coach_pro_v2_state';
 const SETTINGS_KEY = 'osm_ai_coach_pro_v2_settings';
 const API_KEY_STORAGE = 'osm_ai_coach_pro_gemini_key';
@@ -409,65 +409,66 @@ async function geminiJson(parts,temperature=.1,maxOutputTokens=5000){
   const key=localStorage.getItem(API_KEY_STORAGE);
   if(!key) throw new Error('API Gemini não configurada.');
 
-  const live=await availableModels(key);
-  const ordered=[settings.model,...live].filter((x,i,a)=>x&&a.indexOf(x)===i).slice(0,2);
+  // Mesmo comportamento da versão antiga:
+  // consulta a lista real da chave e percorre TODOS os modelos disponíveis.
+  const candidates=await availableModels(key);
+  const ordered=[settings.model,...candidates].filter((x,i,a)=>x&&a.indexOf(x)===i);
+
   let last='';
 
-  async function fetchWithTimeout(url,options,ms=18000){
-    const controller=new AbortController();
-    const timer=setTimeout(()=>controller.abort(),ms);
-    try{return await fetch(url,{...options,signal:controller.signal})}
-    finally{clearTimeout(timer)}
-  }
-
-  for(let mi=0;mi<ordered.length;mi++){
-    const model=ordered[mi];
-
+  for(const model of ordered){
     for(let tryNo=0;tryNo<2;tryNo++){
-      if($('analysisDiagnostics')) $('analysisDiagnostics').textContent=`Gemini: ${model} · tentativa ${tryNo+1}/2`;
+      if($('analysisDiagnostics')){
+        $('analysisDiagnostics').textContent=`Gemini: ${model} · tentativa ${tryNo+1}/2`;
+      }
       job(`Consultando ${model}…`);
 
       const body={
         contents:[{role:'user',parts}],
-        generationConfig:{temperature,maxOutputTokens,responseMimeType:'application/json'}
+        generationConfig:{
+          temperature,
+          maxOutputTokens,
+          responseMimeType:'application/json'
+        }
       };
 
       let res;
       try{
-        res=await fetchWithTimeout(
-          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-          {method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},body:JSON.stringify(body)},
-          18000
-        );
+        res=await geminiFetch(model,key,body);
       }catch(e){
-        last=e?.name==='AbortError'
-          ? `Tempo limite excedido em ${model}.`
-          : `Falha de conexão em ${model}: ${e?.message||e}`;
-        if(tryNo===0){await new Promise(r=>setTimeout(r,700));continue}
-        break;
+        last=e?.message||String(e);
+        continue;
       }
 
       if(res.ok){
         const data=await res.json();
-        const text=(data.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('').trim();
-        if(!text){last=`${model} não retornou conteúdo.`;break}
-        settings.model=model;saveSettings();hydrateSettings();
-        if($('analysisDiagnostics')) $('analysisDiagnostics').textContent=`Análise concluída com ${model}.`;
+        const text=(data.candidates?.[0]?.content?.parts||[])
+          .map(p=>p.text||'')
+          .join('')
+          .trim();
+
+        if(!text) throw new Error('A IA não retornou conteúdo utilizável.');
+
+        settings.model=model;
+        saveSettings();
+        hydrateSettings();
+
+        if($('analysisDiagnostics')){
+          $('analysisDiagnostics').textContent=`Análise concluída com ${model}.`;
+        }
+
         return parseJsonText(text);
       }
 
-      const status=res.status,txt=await res.text();
-      last=`Gemini ${status}: ${txt.slice(0,220)}`;
+      const status=res.status;
+      const txt=await res.text();
+      last=`Gemini ${status}: ${txt.slice(0,260)}`;
 
-      if([429,500,502,503,504].includes(status) && tryNo===0){
-        await new Promise(r=>setTimeout(r,900));
-        continue;
-      }
-      break;
-    }
+      // Igual à main antiga: 429/500/503 recebem segunda tentativa.
+      // Se continuar falhando, passa ao PRÓXIMO modelo disponível.
+      if(![429,500,502,503,504].includes(status)) break;
 
-    if(mi<ordered.length-1 && $('analysisDiagnostics')){
-      $('analysisDiagnostics').textContent=`${model} indisponível. Tentando ${ordered[mi+1]}…`;
+      await new Promise(r=>setTimeout(r,1600*(tryNo+1)));
     }
   }
 
@@ -485,7 +486,7 @@ async function availableModels(key){
       .map(m=>(m.name||'').replace('models/',''))
       .filter(Boolean);
 
-    const preferred=[
+    const pref=[
       'gemini-3.8-flash',
       'gemini-3.7-flash',
       'gemini-3.6-flash',
@@ -493,13 +494,11 @@ async function availableModels(key){
       'gemini-3.5-flash'
     ];
 
-    const ordered=[
-      ...preferred.filter(x=>names.includes(x)),
-      ...names.filter(x=>/flash/i.test(x) && !preferred.includes(x)),
-      ...names.filter(x=>!preferred.includes(x) && !/flash/i.test(x))
+    return [
+      ...pref.filter(x=>names.includes(x)),
+      ...names.filter(x=>/flash/i.test(x)&&!pref.includes(x)),
+      ...names.filter(x=>!pref.includes(x)&&!/flash/i.test(x))
     ];
-
-    return ordered.length ? ordered : fallbackModelList();
   }catch{
     return fallbackModelList();
   }
