@@ -7,7 +7,7 @@
   <meta name="description" content="OSM AI Coach Pro V2 — central inteligente para 4 slots, análise, tática, mercado e aprendizado.">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="styles.css?v=2.3.0">
+  <link rel="stylesheet" href="styles.css?v=2.3.1-hotfix1">
   <title>OSM AI Coach Pro V2</title>
 </head>
 <body>
@@ -171,7 +171,31 @@
   </div>
   <div id="toast" class="toast"></div>
 
+  
+  <script>
+  (async function(){
+    try {
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        for (const reg of regs) {
+          try { await reg.unregister(); } catch(e) {}
+        }
+      }
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        for (const key of keys) {
+          if (key.startsWith('osm-pro-v4-')) {
+            try { await caches.delete(key); } catch(e) {}
+          }
+        }
+      }
+    } catch(e) {
+      console.warn('Cache cleanup skipped', e);
+    }
+  })();
+  </script>
+
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script src="app.js?v=2.3.0"></script>
+  <script src="app.js?v=2.3.1-hotfix1"></script>
 </body>
 </html>
