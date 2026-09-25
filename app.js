@@ -4613,3 +4613,187 @@ function strengthAuditV75(s){
     diff:Number.isFinite(mine)&&Number.isFinite(opp)?mine-opp:null
   };
 }
+
+
+// ===== v7.6: árbitro é trava de segurança + aprendizado disciplinar global =====
+function refereeDescriptorV76(sOrText){
+  if(typeof sOrText==='string')return sOrText;
+  const s=sOrText||{};
+  const m=s.match||{};
+  return [
+    m.refereeColor,
+    m.refereeName,
+    m.refereeStrictness,
+    m.referee,
+    m.refereeLevel,
+    m.refereeText
+  ].filter(Boolean).join(' ');
+}
+
+function refereeBandV58(r){
+  const x=normalize(refereeDescriptorV76(r));
+
+  // ordem do mais rigoroso ao mais permissivo para não cair em regex ambígua
+  if(/red|vermel|muito rigor|very strict|extremamente rigor|rigorosissimo|rigoroso demais|trigger/.test(x))return 'red';
+  if(/orange|laranj|rigoroso|strict/.test(x))return 'orange';
+  if(/yellow|amarel|medio|médio|average|normal ref/.test(x))return 'yellow';
+  if(/blue|azul|lenient|pouco rigor/.test(x))return 'blue';
+  if(/green|verde|soft|permiss|muito permiss/.test(x))return 'green';
+  return 'unknown';
+}
+
+function disciplineLearningV76(s){
+  const games=[];
+  for(const sl of state.slots||[])for(const r of sl.results||[])games.push(r);
+  for(const a of state.archives||[])for(const r of a.results||[])games.push(r);
+
+  const band=refereeBandV58(s);
+  const sameBand=games.filter(r=>{
+    const rb=refereeBandV58(
+      r.context?.refereeColor ||
+      r.context?.referee ||
+      r.context?.refereeName ||
+      ''
+    );
+    return rb===band;
+  });
+
+  const yellow=sameBand.reduce((n,r)=>n+Number(r.stats?.myYellowCards||0),0);
+  const red=sameBand.reduce((n,r)=>n+Number(r.stats?.myRedCards||0),0);
+  const avgCards=sameBand.length ? (yellow + red*2)/sameBand.length : 0;
+
+  return {games:sameBand.length,yellow,red,avgCards};
+}
+
+function refereeTackling(r,s=null){
+  const ctx=s||((r&&typeof r==='object'&&r.match)?r:null);
+  const band=refereeBandV58(ctx||r);
+  const diff=ctx?tacticStrengthDiffV58(ctx):null;
+  const human=!!ctx?.opponent?.human;
+  const learned=ctx?disciplineLearningV76(ctx):{games:0,red:0,avgCards:0};
+
+  // TRAVAS DURAS: a IA nunca pode furar isto.
+  if(band==='red')return 'Cuidadoso';
+
+  if(band==='orange'){
+    // árbitro rigoroso: cuidadoso quando humano, azarão ou histórico disciplinar ruim
+    if(human || (diff!==null&&diff<5) || learned.red>0 || learned.avgCards>=1.5)return 'Cuidadoso';
+    return 'Normal';
+  }
+
+  if(band==='yellow'){
+    // árbitro médio: normal é o padrão seguro; só sobe se o histórico for limpo e houver motivo
+    if(learned.red>0 || learned.avgCards>=2)return 'Cuidadoso';
+    return 'Normal';
+  }
+
+  if(band==='blue'){
+    if(learned.red>0 || learned.avgCards>=2.5)return 'Normal';
+    return 'Agressivo';
+  }
+
+  if(band==='green'){
+    if(learned.red>0 || learned.avgCards>=3)return 'Normal';
+    // extremo só quando somos claramente inferiores e precisamos perturbar, com árbitro permissivo
+    if(diff!==null && diff<=-12 && human)return 'Extremo';
+    return 'Agressivo';
+  }
+
+  // Se não reconheceu o árbitro, não assume risco.
+  return 'Normal';
+}
+
+function tacklingReasonV76(s,tackling){
+  const band=refereeBandV58(s),learn=disciplineLearningV76(s);
+  const labels={
+    red:'muito rigoroso/vermelho',
+    orange:'rigoroso/laranja',
+    yellow:'médio/amarelo',
+    blue:'permissivo/azul',
+    green:'muito permissivo/verde',
+    unknown:'não identificado'
+  };
+  let txt=`Árbitro ${labels[band]||band}: entrada ${tackling}`;
+  if(learn.games)txt+=` · histórico disciplinar global: ${learn.yellow} amarelo(s), ${learn.red} vermelho(s) em ${learn.games} jogo(s) comparáveis`;
+  return txt;
+}
+
+// Revalida a tática final para que o tipo de entrada SEMPRE obedeça ao árbitro real.
+const validateTacticV58_beforeV76 = validateTacticV58;
+function validateTacticV58(raw,s,source='Gemini'){
+  const t=validateTacticV58_beforeV76(raw,s,source);
+  const safeTackling=normalizeTacklingV60(refereeTackling(s,s),'Normal');
+  t.tackling=safeTackling;
+
+  const extra=tacklingReasonV76(s,safeTackling);
+  t.reason=`${t.reason||''}${t.reason?' ':''}${extra}.`;
+  t.engine=`${source} + motor v7.6`;
+  return t;
+}
+
+// Fallback também usa exatamente a mesma política.
+const fallbackTacticV58_beforeV76 = fallbackTacticV58;
+function fallbackTacticV58(s){
+  const t=fallbackTacticV58_beforeV76(s);
+  const safeTackling=normalizeTacklingV60(refereeTackling(s,s),'Normal');
+  t.tackling=safeTackling;
+  t.reason=`${t.reason||''}${t.reason?' ':''}${tacklingReasonV76(s,safeTackling)}.`;
+  t.engine='Local v7.6';
+  return t;
+}
+function fallbackTactic(s){return fallbackTacticV58(s)}
+
+// Prompt reforçado: vencer sem ignorar risco disciplinar.
+const tacticPromptV58_beforeV76 = tacticPromptV58;
+function tacticPromptV58(s){
+  const base=tacticPromptV58_beforeV76(s);
+  const band=refereeBandV58(s);
+  const locked=refereeTackling(s,s);
+  const discipline=disciplineLearningV76(s);
+
+  return `${base}
+
+REGRA ABSOLUTA DE DESARME:
+- árbitro detectado: ${band};
+- tipo de entrada obrigatório pelo motor: ${locked};
+- a IA NÃO pode escolher um nível mais agressivo do que esse;
+- vermelho/muito rigoroso = Cuidadoso obrigatoriamente;
+- laranja/rigoroso = Cuidadoso ou Normal conforme contexto;
+- amarelo/médio = Normal por padrão;
+- azul/permissivo = Agressivo se histórico disciplinar permitir;
+- verde/muito permissivo = Agressivo, podendo Extremo apenas em cenário de alto risco calculado;
+- aprendizado disciplinar global: ${JSON.stringify(discipline)}.
+
+OBJETIVO:
+Maximizar a chance de vitória considerando força, formação rival, estilo, humano/CPU, casa/fora,
+árbitro, cartões históricos e aprendizado global. Não sacrifique a partida com risco de expulsão desnecessário.`;
+}
+
+// Atualiza qualquer tática existente ao abrir/recalcular, sem precisar reanalisar vídeo.
+function enforceCurrentTacklingV76(s){
+  if(!s?.tactic)return false;
+  const expected=normalizeTacklingV60(refereeTackling(s,s),'Normal');
+  if(s.tactic.tackling!==expected){
+    s.tactic.tackling=expected;
+    s.tactic.reason=`${s.tactic.reason||''} ${tacklingReasonV76(s,expected)}.`;
+    s.tactic.engine='motor v7.6';
+    s.updatedAt=nowIso();
+    return true;
+  }
+  return false;
+}
+
+const tacticModal_beforeV76 = tacticModal;
+function tacticModal(n){
+  const s=state.slots[n-1];
+  if(enforceCurrentTacklingV76(s))saveState();
+  return tacticModal_beforeV76(n);
+}
+
+setTimeout(()=>{
+  try{
+    let changed=false;
+    for(const s of state.slots||[])if(enforceCurrentTacklingV76(s))changed=true;
+    if(changed){saveState();renderAll()}
+  }catch(e){console.error(e)}
+},350);
