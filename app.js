@@ -4269,3 +4269,286 @@ function tacticalRiskLabelV73(s){
   if(diff<=14)return 'Favorito';
   return 'Favorito dominante';
 }
+
+
+// ===== v7.5: corrige dados antigos invertidos + invalida tática stale + recálculo coerente =====
+function managerIsMeV75(v){return normalizeManagerV74B(v)===MY_MANAGER_NAME_V74B}
+
+function repairStoredIdentityV75(s){
+  if(!s)return {changed:false,verified:false,reason:'slot ausente'};
+  let changed=false,verified=false,reason='';
+
+  const myMgr=s.myTeam?.manager||s.myTeam?.user||null;
+  const oppMgr=s.opponent?.manager||s.opponent?.user||null;
+
+  if(managerIsMeV75(myMgr)){
+    verified=true;reason='leandrozzy identificado no meu time';
+  }else if(managerIsMeV75(oppMgr)){
+    // Para dados antigos, corrige SOMENTE identidade/força/setores e nomes,
+    // mantendo os dados táticos do rival que vieram do Data Analyst.
+    const oldMine=structuredClone(s.myTeam||{});
+    const oldOpp=structuredClone(s.opponent||{});
+    const rivalTactical={
+      formation:oldOpp.formation,style:oldOpp.style,marking:oldOpp.marking,offside:oldOpp.offside,
+      tackling:oldOpp.tackling,stadium:oldOpp.stadium,loginBonus:oldOpp.loginBonus,
+      secretTraining:oldOpp.secretTraining,trainingCamp:oldOpp.trainingCamp,human:oldOpp.human
+    };
+
+    s.myTeam={
+      ...oldMine,
+      overall:oldOpp.overall,goalkeeper:oldOpp.goalkeeper,defence:oldOpp.defence,
+      midfield:oldOpp.midfield,attack:oldOpp.attack,squadValue:oldOpp.squadValue,
+      playerCount:oldOpp.playerCount,manager:MY_MANAGER_NAME_V74B,user:MY_MANAGER_NAME_V74B
+    };
+    s.opponent={
+      ...oldOpp,
+      overall:oldMine.overall,goalkeeper:oldMine.goalkeeper,defence:oldMine.defence,
+      midfield:oldMine.midfield,attack:oldMine.attack,squadValue:oldMine.squadValue,
+      playerCount:oldMine.playerCount,manager:oldMine.manager||oldMine.user||null,
+      user:oldMine.user||oldMine.manager||null,
+      ...rivalTactical
+    };
+    changed=true;verified=true;reason='dados antigos estavam invertidos: leandrozzy estava no rival';
+  }
+
+  if(verified){
+    s.identityVerifiedAt=nowIso();
+    s.identityVerifiedBy='manager:leandrozzy';
+  }
+
+  // Táticas geradas antes da correção de identidade não são confiáveis.
+  if(s.tactic && (!s.tactic.identityVerified || /^Gemini \+ motor v5\.8 \+ motor v7\.3/.test(String(s.tactic.engine||'')) || /motor v7\.3/.test(String(s.tactic.engine||'')))){
+    s.tacticStaleBecauseIdentity=true;
+  }
+
+  if(changed){
+    s.tactic=null;
+    s.tacticNeedsRefresh=true;
+    s.tacticFreshAt=null;
+    const up=(s.schedule||[]).find(x=>!x.played&&!x.result&&!x.skipped);
+    if(up)up.tacticSnapshot=null;
+    s.updatedAt=nowIso();
+  }
+  return {changed,verified,reason};
+}
+
+function verifyAllStoredIdentityV75(){
+  let changed=false;
+  for(const s of state.slots||[]){
+    const r=repairStoredIdentityV75(s);
+    if(r.changed)changed=true;
+  }
+  if(changed)saveState();
+  return changed;
+}
+
+function identityReadyV75(s){
+  if(!s)return false;
+  if(s.identityVerifiedAt)return true;
+  const r=repairStoredIdentityV75(s);
+  if(r.changed||r.verified){saveState();return true}
+  return false;
+}
+
+function strengthAuditV75(s){
+  const mine=Number(s?.myTeam?.overall),opp=Number(s?.opponent?.overall);
+  return {
+    verified:identityReadyV75(s),
+    mine:Number.isFinite(mine)?mine:null,
+    opp:Number.isFinite(opp)?opp:null,
+    diff:Number.isFinite(mine)&&Number.isFinite(opp)?mine-opp:null
+  };
+}
+
+function tacticRegimeV73(s){
+  const a=strengthAuditV75(s);
+  if(!a.verified||a.diff===null)return 'unknown';
+  if(a.diff<=-20)return 'severe-underdog';
+  if(a.diff<=-10)return 'underdog';
+  if(a.diff<=-4)return 'slight-underdog';
+  if(a.diff<=6)return 'balanced';
+  if(a.diff<=14)return 'favorite';
+  return 'dominant';
+}
+
+function tacticStrengthDiffV58(s){
+  const a=strengthAuditV75(s);
+  return a.verified?a.diff:null;
+}
+
+function humanFavoriteFailureCountV75(s){
+  if(s?.opponent?.human!==true)return 0;
+  const model=typeof learningModelV71==='function'?learningModelV71():null;
+  return model?(model.humanFavFails||[]).length:0;
+}
+function allowAlternativeFavoriteV75(s){
+  const diff=tacticStrengthDiffV58(s);
+  return diff!==null && s?.opponent?.human===true && diff>=15 && humanFavoriteFailureCountV75(s)>0;
+}
+
+function finalReasonV75(s,t,raw=''){
+  const a=strengthAuditV75(s),parts=[];
+  parts.push(`identidade: ${a.verified?'leandrozzy confirmado':'não confirmada'}`);
+  if(a.mine!==null&&a.opp!==null)parts.push(`força ${a.mine} × ${a.opp} (${a.diff>=0?'+':''}${a.diff})`);
+  parts.push(tacticalRiskLabelV73(s));
+  if(s?.opponent?.formation)parts.push(`rival ${s.opponent.formation}`);
+  if(s?.opponent?.human===true)parts.push('humano');
+  parts.push(`tática final ${t.formation} / ${t.gamePlan}`);
+  parts.push(`sliders ${t.pressure}/${t.mentality}/${t.tempo}`);
+  return `${parts.join(' · ')}.${raw?` ${raw}`:''}`;
+}
+
+function validateTacticV58(raw,s,source='Gemini'){
+  const audit=strengthAuditV75(s);
+  if(!audit.verified){
+    throw new Error('Não foi possível confirmar qual lado é leandrozzy. Reanalise o vídeo da partida antes de gerar a tática.');
+  }
+
+  const src=raw||{},diff=audit.diff,reg=tacticRegimeV73(s);
+  const under=['severe-underdog','underdog','slight-underdog'].includes(reg);
+  const base=under?underdogBaseV73(s):(reg==='balanced'?balancedBaseV73(s):dominantBaseV58(s));
+  const fallback=under?base:fallbackTacticV58(s);
+
+  let formation=FORMATIONS.includes(src.formation)?src.formation:fallback.formation;
+  let gamePlan=normalizeGamePlanV60(src.gamePlan)||normalizeGamePlanV60(fallback.gamePlan)||'Jogo de passes';
+
+  if(!hardFormationGateV73(formation,s)){formation=base.formation;gamePlan=base.gamePlan}
+
+  let pressure=clampInt(src.pressure),mentality=clampInt(src.mentality),tempo=clampInt(src.tempo);
+
+  if(under){
+    const p0=base.pressure,m0=base.mentality,t0=base.tempo;
+    pressure=pressure===null?p0:Math.max(p0-6,Math.min(p0+7,pressure));
+    mentality=mentality===null?m0:Math.max(m0-6,Math.min(m0+7,mentality));
+    tempo=tempo===null?t0:Math.max(t0-7,Math.min(t0+7,tempo));
+    if(diff<=-10){pressure=Math.min(58,pressure);mentality=Math.min(55,mentality)}
+    if(diff<=-20){pressure=Math.min(45,pressure);mentality=Math.min(40,mentality)}
+  }else if(reg==='dominant'){
+    const dom=dominantBaseV58(s),allowAlt=allowAlternativeFavoriteV75(s);
+    if(!allowAlt&&!/^4-3-3/.test(formation)){formation=dom.formation;gamePlan=normalizeGamePlanV60(dom.gamePlan)||'Jogar pelas alas'}
+    if(!allowAlt){
+      if(pressure===null||pressure<68)pressure=dom.pressure;
+      if(mentality===null||mentality<72)mentality=dom.mentality;
+      if(tempo===null||tempo<68)tempo=dom.tempo;
+    }else{
+      if(pressure===null)pressure=68;if(mentality===null)mentality=70;if(tempo===null)tempo=68;
+      pressure=Math.max(60,Math.min(82,pressure));mentality=Math.max(58,Math.min(84,mentality));tempo=Math.max(60,Math.min(82,tempo));
+    }
+  }else{
+    if(pressure===null)pressure=fallback.pressure;
+    if(mentality===null)mentality=fallback.mentality;
+    if(tempo===null)tempo=fallback.tempo;
+  }
+
+  let attack=normalizeAttackLineV60(src.attackInstruction||base.attack||fallback.attackInstruction);
+  let mid=normalizeMidLineV60(src.midfieldInstruction||base.mid||fallback.midfieldInstruction);
+  let def=normalizeDefLineV60(src.defenceInstruction||base.def||fallback.defenceInstruction);
+
+  if(under){
+    if(diff<=-10){
+      if(def==='Defesas atacantes'||def==='Apoiar meio-campo')def='Defender atrás';
+      if(mid==='Pressionar na frente')mid=diff<=-15?'Ajudar a defesa':'Manter posições';
+    }
+    if(diff<=-20){mid='Ajudar a defesa';def='Defender atrás'}
+  }
+
+  const tackling=normalizeTacklingV60(refereeTackling(s?.match?.refereeColor||s?.match?.refereeName,s),'Normal');
+  const marking=under?'À zona':normalizeMarkingV60(src.marking);
+  const offside=under?'Não':(/sim/i.test(String(src.offside))?'Sim':'Não');
+
+  const out={
+    formation,gamePlan,pressure,mentality,tempo,marking,offside,tackling,
+    attackInstruction:attack,midfieldInstruction:mid,defenceInstruction:def,
+    confidence:src.confidence||'média',generatedAt:nowIso(),
+    engine:`${source} + motor v7.5`,identityVerified:true
+  };
+  out.reason=finalReasonV75(s,out,src.reason||'');
+  return out;
+}
+
+async function generateTacticForSlot(n,silent=false){
+  const s=state.slots[n-1];if(!s||s.status!=='active')return;
+
+  const repaired=repairStoredIdentityV75(s);
+  if(repaired.changed)saveState();
+
+  if(!identityReadyV75(s)){
+    s.tactic=null;s.tacticNeedsRefresh=true;saveState();
+    toast('Os dados antigos não permitem confirmar qual lado é leandrozzy. Envie novamente o vídeo da partida.');
+    return openTacticVideoRefreshV59(n);
+  }
+
+  if(!localStorage.getItem(API_KEY_STORAGE)){apiModal('Salve sua chave Gemini para gerar táticas.');return}
+
+  if(!silent)toast(`Recalculando Slot ${n} com identidade confirmada…`);
+  try{
+    const raw=await geminiJson([{text:tacticPromptV58(s)}],{temperature:.10,maxOutputTokens:2400});
+    const prev=structuredClone(s.tactic||null);
+    s.tactic=validateTacticV58(raw,s,'Gemini');
+    s.tactic.previous=prev;
+    s.tactic.changedFromPrevious=!!prev && tacticSignatureV71({tactic:prev})!==tacticSignatureV71({tactic:s.tactic});
+    s.tacticFreshAt=nowIso();s.tacticNeedsRefresh=false;
+    attachTacticToUpcomingSchedule(s);s.updatedAt=nowIso();saveState();
+    if(!silent)tacticModal(n);
+    return s.tactic;
+  }catch(e){
+    console.error(e);
+    if(/confirmar qual lado|identidade/i.test(String(e.message||e))){
+      toast(e.message);return openTacticVideoRefreshV59(n);
+    }
+    const prev=structuredClone(s.tactic||null);
+    s.tactic=fallbackTacticV58(s);s.tactic.previous=prev;s.tactic.identityVerified=true;
+    s.tactic.changedFromPrevious=!!prev&&tacticSignatureV71({tactic:prev})!==tacticSignatureV71({tactic:s.tactic});
+    s.tacticFreshAt=nowIso();s.tacticNeedsRefresh=false;attachTacticToUpcomingSchedule(s);saveState();
+    if(!silent)tacticModal(n);return s.tactic;
+  }
+}
+
+async function refreshTacticFromSavedDataV59(n){
+  const s=state.slots[n-1];
+  if(!s||s.status!=='active')return;
+
+  const repair=repairStoredIdentityV75(s);
+  if(repair.changed){
+    saveState();renderToday();
+    toast('Corrigi a inversão antiga entre seu time e o rival. Gerando novamente…');
+  }
+
+  if(!identityReadyV75(s)){
+    toast('Não consigo confiar na força salva: leandrozzy não foi confirmado no lado do seu time. Reanalise o vídeo.');
+    return openTacticVideoRefreshV59(n);
+  }
+
+  const hasOpponent=!!(s.opponent?.teamName&&s.opponent?.overall!=null&&s.opponent?.formation);
+  if(!hasOpponent){
+    toast('Ainda faltam dados do adversário. Envie o vídeo primeiro.');
+    return openTacticVideoRefreshV59(n);
+  }
+
+  // Descarta qualquer tática anterior gerada com a identidade errada.
+  if(s.tactic && (!s.tactic.identityVerified || /v7\.3|v5\.8/.test(String(s.tactic.engine||'')))){
+    s.tactic=null;s.tacticFreshAt=null;s.tacticNeedsRefresh=true;saveState();
+  }
+
+  return generateTacticForSlot(n,false);
+}
+
+function tacticModal(n){
+  const s=state.slots[n-1],t=s.tactic;
+  if(!t){generateTacticForSlot(n);return}
+  const a=strengthAuditV75(s),changed=t.changedFromPrevious===true;
+  openModal(`<h2>Tática · Slot ${n}</h2>
+  <p class="muted small">${esc(s.teamName)} × ${esc(s.opponent.teamName)} · ${esc(t.engine||'IA')}</p>
+  <div class="identity-audit ${a.verified?'ok':'bad'}">
+    <b>${a.verified?'✓ leandrozzy confirmado':'⚠ identidade não confirmada'}</b>
+    <span>${a.mine!==null&&a.opp!==null?`Minha força ${a.mine} × rival ${a.opp} · diferença ${a.diff>=0?'+':''}${a.diff}`:'Forças não confiáveis'}</span>
+  </div>
+  ${t.previous?`<div class="recalc-status ${changed?'changed':'same'}"><b>${changed?'✓ Tática alterada':'↔ Tática mantida'}</b><span>${changed?'O recálculo mudou a configuração.':'O motor manteve a configuração.'}</span></div>`:''}
+  ${tacticVisualHtmlV60(t)}
+  <details class="tactic-exact"><summary>Ver tabela exata</summary><table class="tactic-table">${tacticRows(t).map(([k,v])=>`<tr><td>${esc(k)}</td><td><b>${esc(v)}</b></td></tr>`).join('')}</table></details>
+  <p class="small muted">${esc(t.reason||'')}</p>
+  <div class="actions"><button class="btn" onclick="refreshTacticFromSavedDataV59(${n})">Recalcular com dados atuais</button><button class="btn secondary" onclick="openTacticVideoRefreshV59(${n})">Vídeo novo</button></div>`);
+}
+
+// Ao carregar esta versão, repara o que for reparável e invalida o que não for confiável.
+setTimeout(()=>{try{verifyAllStoredIdentityV75();renderAll()}catch(e){console.error(e)}},250);

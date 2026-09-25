@@ -688,3 +688,13 @@ button:hover,.btn:hover,.primary:hover,.secondary:hover{box-shadow:0 10px 24px r
 
 /* v7.4b */
 .identity-note{padding:8px 10px;border-radius:12px;background:#0a1d31;border:1px solid #284762;color:#abc1d6;font-size:11px}
+
+/* v7.5 auditoria de identidade */
+.identity-audit{display:flex;flex-direction:column;gap:4px;margin:10px 0;padding:10px 12px;border-radius:13px;border:1px solid #31516f;background:#0b1d31}
+.identity-audit.ok{border-color:#2f8d72;background:#0d2927}.identity-audit.ok b{color:#82e8c2}
+.identity-audit.bad{border-color:#a84d5d;background:#321923}.identity-audit.bad b{color:#ff9baa}
+.identity-audit span{font-size:11px;color:#b7cadd}
+.recalc-status{display:flex;flex-direction:column;gap:4px;padding:10px 12px;margin:10px 0 12px;border-radius:13px;border:1px solid #31516f;background:#0b1d31}
+.recalc-status.changed{border-color:#2f8d72;background:#0d2927}.recalc-status.changed b{color:#82e8c2}
+.recalc-status.same{border-color:#80652e;background:#282315}.recalc-status.same b{color:#e8c76d}
+.recalc-status span{font-size:11px;color:#acc1d6}
