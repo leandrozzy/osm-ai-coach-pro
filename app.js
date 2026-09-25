@@ -1,6 +1,6 @@
 'use strict';
 
-const V2_VERSION = '2.0.5';
+const V2_VERSION = '2.0.6';
 const STATE_KEY = 'osm_ai_coach_pro_v2_state';
 const SETTINGS_KEY = 'osm_ai_coach_pro_v2_settings';
 const API_KEY_STORAGE = 'osm_ai_coach_pro_gemini_key';
@@ -380,44 +380,125 @@ function seekWithTimeout(video,t,timeoutMs=5000){
 async function geminiJson(parts,temperature=.1,maxOutputTokens=5000){
   const key=localStorage.getItem(API_KEY_STORAGE);
   if(!key) throw new Error('Configure a chave Gemini');
-  const preferred=settings.model||'gemini-3.8-flash';
-  const models=[preferred,'gemini-3.8-flash','gemini-3.7-flash','gemini-3.6-flash'].filter((x,i,a)=>a.indexOf(x)===i);
 
+  const preferred=settings.model||'gemini-3.8-flash';
+  const models=[preferred,'gemini-3.8-flash','gemini-3.7-flash','gemini-3.6-flash','gemini-3.5-flash']
+    .filter((x,i,a)=>a.indexOf(x)===i);
+
+  const transientStatuses=new Set([408,429,500,502,503,504]);
   let lastError=null;
-  for(const model of models){
-    const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
-    const body={contents:[{role:'user',parts}],generationConfig:{temperature,maxOutputTokens,responseMimeType:'application/json'}};
-    try{
-      const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-      const raw=await response.text();
-      if(!response.ok){
-        let msg=raw;
-        try{msg=JSON.parse(raw)?.error?.message||raw}catch{}
-        lastError=new Error(`Gemini ${response.status}: ${String(msg).slice(0,260)}`);
-        if(response.status===404) continue;
-        throw lastError;
+
+  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+  for(let mi=0; mi<models.length; mi++){
+    const model=models[mi];
+
+    for(let attempt=1; attempt<=2; attempt++){
+      if($('analysisDiagnostics')){
+        $('analysisDiagnostics').textContent=`Gemini: ${model} · tentativa ${attempt}/2`;
       }
-      let data;
-      try{data=JSON.parse(raw)}catch{throw new Error('Resposta inválida da API Gemini')}
-      const out=(data.candidates||[]).flatMap(c=>c?.content?.parts||[]).map(p=>p?.text||'').join('').trim();
-      if(!out) throw new Error('Gemini não retornou conteúdo');
-      let parsed;
-      try{parsed=JSON.parse(out)}
-      catch{
-        const cleaned=out.replace(/^```json\s*/i,'').replace(/```$/,'').trim();
-        parsed=JSON.parse(cleaned);
+      if(typeof job==='function'){
+        job(`Consultando ${model}${attempt>1?' novamente':''}…`);
       }
-      if(settings.model!==model){
-        settings.model=model;saveSettings();if($('modelSelect'))$('modelSelect').value=model;
+
+      const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
+      const body={
+        contents:[{role:'user',parts}],
+        generationConfig:{temperature,maxOutputTokens,responseMimeType:'application/json'}
+      };
+
+      try{
+        const response=await fetch(url,{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify(body)
+        });
+
+        const raw=await response.text();
+
+        if(!response.ok){
+          let msg=raw;
+          try{msg=JSON.parse(raw)?.error?.message||raw}catch{}
+          lastError=new Error(`Gemini ${response.status}: ${String(msg).slice(0,260)}`);
+
+          if(response.status===404){
+            break; // modelo inexistente/indisponível: pula para o próximo
+          }
+
+          if(transientStatuses.has(response.status)){
+            if(attempt<2){
+              if($('analysisDiagnostics')) $('analysisDiagnostics').textContent=`${model} ocupado. Tentando novamente…`;
+              await sleep(attempt===1?900:1600);
+              continue;
+            }
+            break; // após 2 tentativas, tenta outro modelo
+          }
+
+          throw lastError;
+        }
+
+        let data;
+        try{data=JSON.parse(raw)}catch{throw new Error('Resposta inválida da API Gemini')}
+
+        const out=(data.candidates||[])
+          .flatMap(c=>c?.content?.parts||[])
+          .map(p=>p?.text||'')
+          .join('')
+          .trim();
+
+        if(!out) throw new Error('Gemini não retornou conteúdo');
+
+        let parsed;
+        try{
+          parsed=JSON.parse(out);
+        }catch{
+          const cleaned=out.replace(/^```json\s*/i,'').replace(/```$/,'').trim();
+          parsed=JSON.parse(cleaned);
+        }
+
+        if(settings.model!==model){
+          settings.model=model;
+          saveSettings();
+          if($('modelSelect')) $('modelSelect').value=model;
+        }
+
+        if($('analysisDiagnostics')) $('analysisDiagnostics').textContent=`Análise concluída com ${model}.`;
+        return parsed;
+
+      }catch(e){
+        lastError=e;
+        const msg=String(e?.message||e);
+
+        // erros de rede também recebem uma segunda tentativa
+        const networkish=/Failed to fetch|NetworkError|Load failed|connection/i.test(msg);
+        if(networkish && attempt<2){
+          if($('analysisDiagnostics')) $('analysisDiagnostics').textContent=`Falha de rede em ${model}. Tentando novamente…`;
+          await sleep(900);
+          continue;
+        }
+
+        if(networkish) break;
+
+        if(/Gemini (408|429|500|502|503|504)/.test(msg)){
+          if(attempt<2){
+            await sleep(900);
+            continue;
+          }
+          break;
+        }
+
+        if(/Gemini 404/.test(msg)) break;
+
+        throw e;
       }
-      return parsed;
-    }catch(e){
-      lastError=e;
-      if(String(e?.message||'').includes('404')) continue;
-      throw e;
+    }
+
+    if(mi<models.length-1 && $('analysisDiagnostics')){
+      $('analysisDiagnostics').textContent=`Modelo indisponível/ocupado. Tentando ${models[mi+1]}…`;
     }
   }
-  throw lastError||new Error('Nenhum modelo Gemini disponível');
+
+  throw lastError||new Error('Nenhum modelo Gemini respondeu. Tente novamente em alguns instantes.');
 }
 
 
@@ -709,7 +790,6 @@ async function runPendingAnalysis(){
     else if(analysisMode==='tactic')await analyzeFiles(pendingMediaFiles);
     else toast('Este modo será ampliado; use o registro manual por enquanto.');
   }finally{
-    if($('analysisDiagnostics'))$('analysisDiagnostics').textContent='Análise finalizada.';
     analysisBusy=false;
     $('analyzeNowBtn').disabled=false;
     $('analyzeNowBtn').textContent='🔎 Analisar mídia novamente';
