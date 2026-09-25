@@ -1,6 +1,6 @@
 'use strict';
 
-const V2_VERSION = '2.0.10';
+const V2_VERSION = '2.1.0';
 const STATE_KEY = 'osm_ai_coach_pro_v2_state';
 const SETTINGS_KEY = 'osm_ai_coach_pro_v2_settings';
 const API_KEY_STORAGE = 'osm_ai_coach_pro_gemini_key';
@@ -927,6 +927,438 @@ window.saveResult=function(n){
   s.results.push(e);s.tactic=null;if(Number.isFinite(Number(s.round)))s.round=Number(s.round)+1;saveState();closeModal();toast('Resultado salvo; aprendizado atualizado');
 };
 
+
+/* =========================================================
+   V2.1 ENGINE — base de leitura da MAIN + recursos da V2
+   ========================================================= */
+
+function v21NormText(s){
+  return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+}
+function v21FileToDataUrl(file){
+  return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(file)});
+}
+function v21LoadImage(src){
+  return new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=src});
+}
+function v21SeekVideo(v,t){
+  return new Promise(res=>{
+    let done=false;
+    const finish=()=>{if(done)return;done=true;v.removeEventListener('seeked',finish);res()};
+    v.addEventListener('seeked',finish,{once:true});
+    v.currentTime=t;
+    setTimeout(finish,900);
+  });
+}
+function v21CaptureVideoFrame(v,t,name){
+  const maxW=1280,scale=Math.min(1,maxW/(v.videoWidth||maxW));
+  const w=Math.max(320,Math.round((v.videoWidth||1280)*scale));
+  const h=Math.max(180,Math.round((v.videoHeight||720)*scale));
+  const c=document.createElement('canvas');c.width=w;c.height=h;
+  const x=c.getContext('2d');x.drawImage(v,0,0,w,h);
+  const dataUrl=c.toDataURL('image/jpeg',.82);
+
+  const tw=96,th=54,tc=document.createElement('canvas');tc.width=tw;tc.height=th;
+  const tx=tc.getContext('2d');tx.drawImage(v,0,0,tw,th);
+  const data=tx.getImageData(0,0,tw,th).data;
+  const thumb=new Uint8Array(tw*th),hist=new Uint16Array(16);
+
+  let bright=0,sat=0,leftWhite=0,leftN=0,bottomWhite=0,bottomN=0,rightBlue=0,rightGreen=0,rightN=0,dark=0;
+  for(let py=0;py<th;py++)for(let px=0;px<tw;px++){
+    const j=py*tw+px,i=j*4,r=data[i],g=data[i+1],b=data[i+2],gray=Math.round((r+g+b)/3);
+    thumb[j]=gray;hist[Math.min(15,Math.floor(gray/16))]++;bright+=gray;
+    const mx=Math.max(r,g,b),mn=Math.min(r,g,b);sat+=mx-mn;if(gray<75)dark++;
+    if(px<tw*.42){leftN++;if(r>190&&g>190&&b>190)leftWhite++}
+    if(py>th*.48){bottomN++;if(r>185&&g>185&&b>185)bottomWhite++}
+    if(px>tw*.42){rightN++;if(b>115&&b>r*1.18&&b>g*.92)rightBlue++;if(g>95&&g>r*1.18&&g>b*.82)rightGreen++}
+  }
+  const count=tw*th;
+  return {
+    dataUrl,base64:dataUrl.split(',')[1],mimeType:'image/jpeg',time:t,name,thumb,hist,
+    brightness:bright/count,saturation:sat/count,score:0,
+    layout:{
+      leftWhite:leftN?leftWhite/leftN:0,
+      bottomWhite:bottomN?bottomWhite/bottomN:0,
+      rightBlue:rightN?rightBlue/rightN:0,
+      rightGreen:rightN?rightGreen/rightN:0,
+      dark:dark/count
+    }
+  };
+}
+function v21CanvasFrameFromImage(img,t,name){
+  const maxW=1280,scale=Math.min(1,maxW/img.naturalWidth);
+  const w=Math.round(img.naturalWidth*scale),h=Math.round(img.naturalHeight*scale);
+  const c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').drawImage(img,0,0,w,h);
+  const dataUrl=c.toDataURL('image/jpeg',.82);
+  return {dataUrl,base64:dataUrl.split(',')[1],mimeType:'image/jpeg',time:t,name,score:100,brightness:160,saturation:30,layout:{}};
+}
+function v21PixelDiff(a,b){
+  if(!a||!b||a.length!==b.length)return 100;
+  let s=0;for(let i=0;i<a.length;i++)s+=Math.abs(a[i]-b[i]);return s/a.length;
+}
+function v21HistDiff(a,b){
+  if(!a||!b)return 100;
+  let s=0,tot=0;for(let i=0;i<a.length;i++){s+=Math.abs(a[i]-b[i]);tot+=Math.max(a[i],b[i])}
+  return tot?100*s/tot:0;
+}
+function v21FrameDistance(a,b){
+  if(!a||!b)return 100;
+  const p=v21PixelDiff(a.thumb,b.thumb),h=v21HistDiff(a.hist,b.hist);
+  const br=Math.abs((a.brightness||0)-(b.brightness||0)),st=Math.abs((a.saturation||0)-(b.saturation||0));
+  return p*.58+h*.22+br*.12+st*.08;
+}
+function v21ScenePriority(f){
+  let p=f.score||0;
+  if((f.brightness||0)>135)p+=12;
+  if((f.saturation||0)<45)p+=8;
+  return p;
+}
+function v21ChooseDiverseFrames(frames,max){
+  if(frames.length<=max)return [...frames].sort((a,b)=>(a.time||0)-(b.time||0));
+  const sorted=[...frames].sort((a,b)=>(a.time||0)-(b.time||0)),picked=[];
+  const bins=Math.min(max,12),dur=(sorted.at(-1)?.time||1)-(sorted[0]?.time||0)||1;
+  for(let b=0;b<bins;b++){
+    const lo=(sorted[0]?.time||0)+dur*b/bins,hi=(sorted[0]?.time||0)+dur*(b+1)/bins;
+    const group=sorted.filter(f=>(f.time||0)>=lo&&(f.time||0)<=hi);
+    if(!group.length)continue;
+    const best=[...group].sort((a,b)=>v21ScenePriority(b)-v21ScenePriority(a))[0];
+    if(best&&!picked.includes(best))picked.push(best);
+  }
+  while(picked.length<max){
+    let best=null,bestScore=-1;
+    for(const f of sorted){
+      if(picked.includes(f))continue;
+      const minD=picked.length?Math.min(...picked.map(p=>v21FrameDistance(f,p))):100;
+      const score=minD+v21ScenePriority(f)*.18;
+      if(score>bestScore){best=f;bestScore=score}
+    }
+    if(!best)break;
+    if(picked.length>=4&&Math.min(...picked.map(p=>v21FrameDistance(best,p)))<7)break;
+    picked.push(best);
+  }
+  return picked.sort((a,b)=>(a.time||0)-(b.time||0)).slice(0,max);
+}
+async function v21ExtractVideoFrames(file,maxFrames=20){
+  const url=URL.createObjectURL(file),v=document.createElement('video');
+  v.src=url;v.muted=true;v.playsInline=true;v.preload='metadata';
+  await new Promise((res,rej)=>{v.onloadedmetadata=res;v.onerror=()=>rej(new Error(`Não consegui abrir ${file.name}`))});
+  const dur=Math.max(.2,v.duration||1),times=[];
+  for(let i=0;i<maxFrames;i++)times.push(Math.min(dur-.08,Math.max(.08,(dur*(i+.5))/maxFrames)));
+  const frames=[];let prev=null;
+  for(const t of times){
+    await v21SeekVideo(v,t);
+    const f=v21CaptureVideoFrame(v,t,file.name),d=prev?v21PixelDiff(prev,f.thumb):100;
+    prev=f.thumb;f.score=d;
+    if(d>=3||frames.length<3)frames.push(f);
+  }
+  URL.revokeObjectURL(url);
+  return v21ChooseDiverseFrames(frames,maxFrames);
+}
+async function v21ImageToFrame(file){
+  const data=await v21FileToDataUrl(file),img=await v21LoadImage(data);
+  return v21CanvasFrameFromImage(img,0,file.name);
+}
+async function v21RunLocalOcr(frames){
+  if(!window.Tesseract)throw new Error('OCR local não carregou. Recarregue a página e tente novamente.');
+  const results=[];let worker=null;
+  try{
+    worker=await Tesseract.createWorker('por+eng',1,{logger:m=>{
+      if(m.status==='recognizing text'&&m.progress)setProgress(20+Math.round(m.progress*28),`OCR local ${Math.round(m.progress*100)}%…`);
+    }});
+  }catch{
+    worker=await Tesseract.createWorker('eng',1,{logger:m=>{
+      if(m.status==='recognizing text'&&m.progress)setProgress(20+Math.round(m.progress*28),`OCR local ${Math.round(m.progress*100)}%…`);
+    }});
+  }
+  try{
+    for(let i=0;i<frames.length;i++){
+      setProgress(22+Math.round((i/Math.max(1,frames.length))*26),`OCR quadro ${i+1}/${frames.length}…`);
+      const {data}=await worker.recognize(frames[i].dataUrl);
+      const text=String(data?.text||'').replace(/[ \t]+/g,' ').replace(/\n{3,}/g,'\n\n').trim();
+      if(text.length>5)results.push({frame:i+1,time:Math.round(frames[i].time||0),text});
+    }
+  }finally{if(worker)await worker.terminate()}
+  return {mode:analysisMode,frames:results,joined:results.map(x=>`[Quadro ${x.frame} ~${x.time}s]\n${x.text}`).join('\n\n')};
+}
+function v21SelectVisualEvidence(frames,n=3){
+  if(!frames.length)return [];
+  const ranked=[...frames].sort((a,b)=>(b.score||0)-(a.score||0)),out=[];
+  for(const f of ranked){
+    if(out.length>=n)break;
+    if(!out.some(x=>Math.abs((x.time||0)-(f.time||0))<1.2))out.push(f);
+  }
+  return out;
+}
+function v21BuildFrameClassification(text,frame,slot){
+  const t=v21NormText(text),myName=v21NormText(slot?.teamName),oppName=v21NormText(slot?.opponent?.teamName),nick=v21NormText(settings.userNick||''),l=frame?.layout||{};
+  const score={match_overview:0,my_squad:0,opponent_squad:0,analyst_summary:0,analyst_marking:0,analyst_formation:0};
+  if(t.includes('vs'))score.match_overview+=5;
+  if(t.includes('arbitro'))score.match_overview+=6;
+  if(t.includes('jornada'))score.match_overview+=4;
+  if((l.dark||0)>.38)score.match_overview+=2;
+  const squadBase=(l.bottomWhite||0)>.32?5:0;
+  if(squadBase){score.my_squad+=squadBase;score.opponent_squad+=squadBase}
+  if(t.includes('posicao')||t.includes('objetivo')||t.includes('jogador')||t.includes('idade')||t.includes('valor')){score.my_squad+=2;score.opponent_squad+=2}
+  if(nick&&t.includes(nick)){score.my_squad+=12;score.opponent_squad-=8}
+  if(myName&&t.includes(myName)){score.my_squad+=8;score.opponent_squad-=5}
+  if(oppName&&t.includes(oppName)){score.opponent_squad+=10;score.my_squad-=4}
+  const analystLayout=(l.leftWhite||0)>.34?5:0;
+  if(analystLayout){score.analyst_summary+=5;score.analyst_marking+=2;score.analyst_formation+=2}
+  if(t.includes('pelo que pude ver')||t.includes('tenho a certeza')||t.includes('nivel do estadio'))score.analyst_summary+=10;
+  if(t.includes('marcacao')||t.includes('fora-de-jogo')||t.includes('fora de jogo')||t.includes('homem-a-homem')||t.includes('a zona'))score.analyst_marking+=10;
+  if((l.rightBlue||0)>.1)score.analyst_marking+=3;
+  if(t.includes('formacao:')||t.includes('formação:')||t.includes('suplentes')||t.includes('tatica'))score.analyst_formation+=10;
+  if((l.rightGreen||0)>.12)score.analyst_formation+=4;
+  return score;
+}
+function v21SelectRequiredTacticFrames(frames,ocr){
+  const slot=selectedSlot(),enriched=(ocr.frames||[]).map(o=>{
+    const frame=frames[(o.frame||1)-1];
+    return {...o,frame,scores:v21BuildFrameClassification(o.text,frame,slot)};
+  }).filter(x=>x.frame);
+  const pick=(key,min=4,exclude=[])=>{
+    const b=[...enriched].filter(x=>!exclude.includes(x.frame)).sort((a,b)=>(b.scores[key]||0)-(a.scores[key]||0))[0];
+    return b&&(b.scores[key]||0)>=min?b:null;
+  };
+  const match=pick('match_overview',5),mine=pick('my_squad',5),opp=pick('opponent_squad',5,mine?[mine.frame]:[]);
+  const mark=pick('analyst_marking',6),form=pick('analyst_formation',6);
+  let summary=pick('analyst_summary',6);
+  if(!summary){
+    const candidates=[mark,form].filter(Boolean).sort((a,b)=>(b.scores.analyst_summary||0)-(a.scores.analyst_summary||0));
+    if(candidates[0]&&(candidates[0].scores.analyst_summary||0)>=5)summary=candidates[0];
+  }
+  const map={match_overview:match,my_squad:mine,opponent_squad:opp,analyst_summary:summary,analyst_marking:mark,analyst_formation:form};
+  const defs=[
+    ['match_overview','Tela da partida'],['my_squad','Meu elenco'],['opponent_squad','Elenco rival'],
+    ['analyst_summary','Analista resumo'],['analyst_marking','Analista marcação'],['analyst_formation','Analista formação']
+  ];
+  const result=defs.map(([key,label])=>map[key]?{type:key,label,frame:map[key].frame,text:map[key].text}:{type:key,label,frame:null,text:null});
+  ocr.required=result.reduce((a,x)=>{a[x.type]=x.text||null;return a},{});
+  ocr.missingRequired=result.filter(x=>!x.frame).map(x=>x.label);
+  return result;
+}
+function v21Prompt(ocr,mode){
+  const s=selectedSlot();
+  const base=`Você é um extrator especialista no OSM 26 Android.
+Meu usuário é "${settings.userNick||'leandrozzy'}". Quando esse nick aparecer, aquele lado é SEMPRE meu time.
+Nunca inverta minha força com a força rival. Nunca invente valor ausente. Use null quando não souber.
+OCR LOCAL:
+${ocr.joined}
+
+DADOS SALVOS DO SLOT (só apoio, não contradiga o vídeo):
+${JSON.stringify({teamName:s.teamName,myTeam:s.myTeam,opponent:s.opponent,match:s.match,competitionType:s.competitionType,round:s.round})}
+`;
+
+  if(mode==='tactic')return base+`
+O app separou as telas obrigatórias:
+${JSON.stringify(ocr.required||{},null,2)}
+Ausentes:
+${JSON.stringify(ocr.missingRequired||[])}
+
+Extraia meu time, rival, casa/fora, árbitro, força geral, GOL/DEF/MEI/ATA, estádio, humano/CPU, bônus,
+campo de treinamento, treino secreto, formação rival, plano rival, marcação rival e impedimento.
+Humano=true somente se houver nick/manager visível abaixo do adversário.
+Se treino secreto impedir análise rival, mantenha os campos secretos null.
+
+Gere também UMA tática final completa.
+Árbitro vermelho/laranja: desarme Cuidadoso.
+Retorne somente:
+{"capture":{"teamName":null,"competitionName":null,"competitionType":null,"round":null,"totalRounds":null,
+"myTeam":{"overall":null,"goalkeeper":null,"defence":null,"midfield":null,"attack":null,"squadValue":null,"playerCount":null,"stadium":null,"loginBonus":null,"secretTraining":null,"trainingCamp":null},
+"opponent":{"teamName":null,"human":null,"manager":null,"overall":null,"goalkeeper":null,"defence":null,"midfield":null,"attack":null,"squadValue":null,"playerCount":null,"stadium":null,"loginBonus":null,"secretTraining":null,"trainingCamp":null,"formation":null,"style":null,"marking":null,"offside":null},
+"match":{"venue":null,"refereeName":null,"refereeColor":null,"exactDateTimeText":null,"countdownText":null},
+"recommendedTactic":{"formation":"","gamePlan":"","pressure":0,"mentality":0,"tempo":0,"marking":"À zona","offside":"Não","tackling":"Normal","attackInstruction":"","midfieldInstruction":"","defenceInstruction":"","reason":""}}}`;
+
+  if(mode==='market')return base+`
+Analise SOMENTE MEU ELENCO mostrado no vídeo.
+Extraia TODOS os jogadores visíveis ao longo da rolagem.
+Leia EXATAMENTE a coluna Pos. Códigos do OSM:
+GR = goleiro; DD/DC/DE = defensores; MDC/MC/MCO/MD/ME = meias; PL/ED/EE = atacantes.
+Camisa laranja = em treinamento, NÃO venda.
+Venda somente quando houver setas/indicador real de transferência.
+Não invente jogador.
+Retorne somente:
+{"roster":[{"name":"","position":null,"rating":null,"value":null,"age":null,"training":false,"forSale":false}],
+"myTeam":{"squadValue":null,"playerCount":null}}`;
+
+  if(mode==='calendar')return base+`
+Analise SOMENTE o calendário.
+Casinha à esquerda = Casa; sem casinha = Fora.
+Taça/troféu = Copa/Taça.
+V/D/E ou placar = partida já jogada.
+Extraia futuras e já jogadas.
+Retorne somente:
+{"matches":[{"round":null,"opponent":null,"competitionType":"league|cup|null","venue":"Casa|Fora|null","dateText":null,"timeText":null,"dateTime":null,"result":null,"outcome":"V|D|E|null","played":false,"conditional":false}]}`;
+
+  return base+`
+Analise SOMENTE o resultado final.
+Extraia placar, formação final dos dois times, remates, posse, cantos, faltas, amarelos e vermelhos de cada time.
+Não invente.
+Retorne somente:
+{"teamName":null,"opponent":null,"gf":null,"ga":null,"score":null,"myFormation":null,"oppFormation":null,
+"stats":{"myShots":null,"oppShots":null,"myPossession":null,"oppPossession":null,"myCorners":null,"oppCorners":null,"myFouls":null,"oppFouls":null,"myYellowCards":null,"oppYellowCards":null,"myRedCards":null,"oppRedCards":null},
+"events":[]}`;
+}
+async function v21AnalyzePackage(ocr,evidence,mode){
+  const parts=[{text:v21Prompt(ocr,mode)}];
+  for(const f of evidence)parts.push({inlineData:{mimeType:f.mimeType,data:f.base64}});
+  return geminiJson(parts,.03,mode==='tactic'?8500:7000);
+}
+function v21MergeNonNull(old,nw){
+  const out={...(old||{})};
+  for(const [k,v] of Object.entries(nw||{}))if(v!==null&&v!==undefined&&v!=='')out[k]=v;
+  return out;
+}
+function v21ApplyCapture(c){
+  const s=selectedSlot(),confidence=.88;
+  s.status='active';
+  for(const k of ['teamName','competitionName','competitionType','round','totalRounds'])if(c?.[k]!==null&&c?.[k]!==undefined&&c?.[k]!=='')s[k]=c[k];
+  s.myTeam=v21MergeNonNull(s.myTeam,c?.myTeam||{});
+  s.opponent=v21MergeNonNull(s.opponent,c?.opponent||{});
+  s.match=v21MergeNonNull(s.match,c?.match||{});
+
+  const map=[
+    ['teamName','teamName'],['opponent.teamName','opponent.teamName'],['match.venue','match.venue'],['match.refereeColor','match.refereeColor'],
+    ['myTeam.overall','myTeam.overall'],['opponent.overall','opponent.overall'],
+    ['myTeam.goalkeeper','myTeam.goalkeeper'],['myTeam.defence','myTeam.defence'],['myTeam.midfield','myTeam.midfield'],['myTeam.attack','myTeam.attack'],
+    ['opponent.goalkeeper','opponent.goalkeeper'],['opponent.defence','opponent.defence'],['opponent.midfield','opponent.midfield'],['opponent.attack','opponent.attack'],
+    ['opponent.human','opponent.human'],['opponent.manager','opponent.manager'],['opponent.loginBonus','opponent.loginBonus'],['opponent.stadium','opponent.stadium'],
+    ['opponent.trainingCamp','opponent.trainingCamp'],['opponent.secretTraining','opponent.secretTraining'],
+    ['opponent.formation','opponent.formation'],['opponent.style','opponent.style'],['opponent.marking','opponent.marking'],['opponent.offside','opponent.offside']
+  ];
+  for(const [path] of map){
+    const v=getPath(s,path);
+    if(hasValue(v)||typeof v==='boolean')s.fieldMeta[path]={source:'detected',confidence,updatedAt:nowIso()};
+  }
+  s.lastAnalysisAt=nowIso();
+  calcQuality(s);
+
+  if(c?.recommendedTactic){
+    const t=c.recommendedTactic;
+    s.tactic={
+      formation:t.formation||null,gamePlan:t.gamePlan==='Chutar de longe'?'Remate à vista':t.gamePlan,
+      pressure:Number(t.pressure),mentality:Number(t.mentality),tempo:Number(t.tempo),
+      marking:t.marking||'À zona',offside:t.offside||'Não',
+      tackling:t.tackling||'Normal',
+      attackInstruction:t.attackInstruction||'Atacar apenas',
+      midfieldInstruction:t.midfieldInstruction||'Manter posição',
+      defenceInstruction:t.defenceInstruction||'Defender atrás',
+      reason:t.reason||'Gerada a partir da leitura da partida.',
+      confidenceScore:Math.max(.62,Math.min(.93,(s.analysisQuality||70)/100)),
+      generatedAt:nowIso(),engine:'V1 Engine + V2'
+    };
+  }
+}
+function v21ApplyRoster(data){
+  const s=selectedSlot(),roster=Array.isArray(data?.roster)?data.roster:[];
+  if(roster.length)s.roster=roster;
+  if(data?.myTeam)s.myTeam=v21MergeNonNull(s.myTeam,data.myTeam);
+  s.status='active';s.lastAnalysisAt=nowIso();s.marketPlan=buildMarketPlan(s);
+}
+function v21ApplyCalendar(data){
+  const s=selectedSlot(),rows=Array.isArray(data?.matches)?data.matches:[];
+  s.schedule=rows.map(x=>({...x,skipped:false}));
+  const future=s.schedule.filter(x=>!x.played&&x.dateTime).sort((a,b)=>new Date(a.dateTime)-new Date(b.dateTime))[0];
+  if(future){
+    s.match.nextMatchAt=future.dateTime||s.match.nextMatchAt;
+    s.match.venue=future.venue||s.match.venue;
+    s.opponent.teamName=future.opponent||s.opponent.teamName;
+  }
+  s.lastAnalysisAt=nowIso();
+}
+function v21ApplyResult(r){
+  const s=selectedSlot(),gf=Number(r?.gf),ga=Number(r?.ga);
+  if(!Number.isFinite(gf)||!Number.isFinite(ga))throw new Error('Não consegui identificar o placar final.');
+  s.results.push({
+    createdAt:nowIso(),opponent:r.opponent||s.opponent.teamName,gf,ga,score:r.score||`${gf}-${ga}`,
+    tactic:s.tactic?clone(s.tactic):null,stats:r.stats||{},events:r.events||[],
+    context:{myOverall:s.myTeam.overall,oppOverall:s.opponent.overall,oppFormation:r.oppFormation||s.opponent.formation,myFormation:r.myFormation||s.tactic?.formation||null,oppStyle:s.opponent.style,venue:s.match.venue,referee:s.match.refereeColor,strengthBucket:strengthBucket(s)}
+  });
+  s.tactic=null;
+  if(Number.isFinite(Number(s.round)))s.round=Number(s.round)+1;
+}
+function v21RenderEvidence(frames){
+  $('mediaPreview').innerHTML=frames.slice(0,12).map(f=>`<img src="${f.dataUrl}" alt="Quadro ${Math.round(f.time||0)}s">`).join('');
+}
+async function v21Analyze(files){
+  const n=Number($('analysisSlot').value)||state.selectedSlot;
+  state.selectedSlot=n;
+  const video=files.find(f=>f.type.startsWith('video/'));
+  const images=files.filter(f=>f.type.startsWith('image/'));
+  let frames=[];
+
+  setProgress(5,'Selecionando quadros importantes…');
+
+  if(video){
+    frames=await v21ExtractVideoFrames(video,analysisMode==='tactic'?18:20);
+  }else if(images.length){
+    for(const f of images)frames.push(await v21ImageToFrame(f));
+  }else{
+    throw new Error('Selecione um vídeo ou imagens do OSM.');
+  }
+
+  v21RenderEvidence(frames);
+  setProgress(18,'Lendo texto localmente com OCR…');
+  const ocr=await v21RunLocalOcr(frames);
+
+  let evidence,result;
+
+  if(analysisMode==='tactic'){
+    const selected=v21SelectRequiredTacticFrames(frames,ocr);
+    const missing=selected.filter(x=>!x.frame).map(x=>x.label);
+    if(missing.length){
+      throw new Error(`Faltaram telas importantes: ${missing.join(', ')}. Grave novamente parando 1–2 segundos em cada tela.`);
+    }
+    evidence=selected.filter(x=>x.frame).map(x=>x.frame);
+    setProgress(58,'Analisando partida com o motor da V1…');
+    result=await v21AnalyzePackage(ocr,evidence,'tactic');
+    v21ApplyCapture(result.capture||result.captures?.[0]||result);
+    saveState();
+    renderCoverage(selectedSlot());
+    renderAnalysisSummary(selectedSlot());
+    renderPregame();
+    if($('autoTactic').checked && !selectedSlot().tactic)await generateTactic(n);
+    setProgress(100,'Partida analisada');
+    job('Partida analisada com o motor da V1 e recursos da V2.','done');
+    return;
+  }
+
+  if(analysisMode==='market'){
+    evidence=v21SelectVisualEvidence(frames,3);
+    setProgress(58,'Lendo elenco com o motor da V1…');
+    result=await v21AnalyzePackage(ocr,evidence,'market');
+    v21ApplyRoster(result);
+    saveState();
+    renderMarket();
+    $('analysisContent').innerHTML=`<div class="card" style="margin-top:12px"><h3>Elenco atualizado</h3><p class="muted small">${selectedSlot().roster.length} jogador(es) reconhecido(s).</p></div>`;
+    setProgress(100,'Elenco atualizado');
+    job('Elenco atualizado.','done');
+    return;
+  }
+
+  if(analysisMode==='calendar'){
+    evidence=v21SelectVisualEvidence(frames,5);
+    setProgress(58,'Lendo calendário com o motor da V1…');
+    result=await v21AnalyzePackage(ocr,evidence,'calendar');
+    v21ApplyCalendar(result);
+    saveState();
+    $('analysisContent').innerHTML=`<div class="card" style="margin-top:12px"><h3>Calendário atualizado</h3><p class="muted small">${selectedSlot().schedule.length} partida(s) reconhecida(s).</p></div>`;
+    setProgress(100,'Calendário atualizado');
+    job('Calendário atualizado.','done');
+    return;
+  }
+
+  evidence=v21SelectVisualEvidence(frames,6);
+  setProgress(58,'Lendo resultado com o motor da V1…');
+  result=await v21AnalyzePackage(ocr,evidence,'result');
+  v21ApplyResult(result);
+  saveState();
+  renderHistory();
+  $('analysisContent').innerHTML=`<div class="card" style="margin-top:12px"><h3>Resultado registrado</h3><p class="muted small">${esc(result.score||`${result.gf}-${result.ga}`)} salvo no histórico e aprendizado.</p></div>`;
+  setProgress(100,'Resultado registrado');
+  job('Resultado registrado e aprendizado atualizado.','done');
+}
+
 function setAnalysisMode(mode){
   analysisMode=mode;
   pendingMediaFiles=[];
@@ -974,23 +1406,25 @@ async function runPendingAnalysis(){
   if(!localStorage.getItem(API_KEY_STORAGE)){apiModal('Configure a API Gemini antes de analisar.');return}
 
   analysisBusy=true;
-  if($('analysisDiagnostics')) $('analysisDiagnostics').textContent='Análise iniciada…';
+  $('progressWrap').classList.remove('hidden');
+  if($('analysisDiagnostics'))$('analysisDiagnostics').textContent='Usando motor de análise da V1 + recursos da V2.';
   $('analyzeNowBtn').disabled=true;
   $('analyzeNowBtn').textContent='Analisando…';
 
   try{
-    if(analysisMode==='market') await analyzeMarketFiles(pendingMediaFiles);
-    else if(analysisMode==='tactic') await analyzeFiles(pendingMediaFiles);
-    else toast('Este modo será ampliado; use o registro manual por enquanto.');
+    await v21Analyze(pendingMediaFiles);
+    if($('analysisDiagnostics'))$('analysisDiagnostics').textContent='Análise concluída.';
   }catch(e){
     const msg=e?.message||String(e);
-    if($('analysisDiagnostics')) $('analysisDiagnostics').textContent=`Falha: ${msg}`;
+    if($('analysisDiagnostics'))$('analysisDiagnostics').textContent=`Falha: ${msg}`;
+    setProgress(100,'Falha na análise');
     job(msg,'error');
     toast(msg);
   }finally{
     analysisBusy=false;
     $('analyzeNowBtn').disabled=false;
     $('analyzeNowBtn').textContent='🔎 Analisar mídia novamente';
+    setTimeout(()=>$('progressWrap').classList.add('hidden'),1400);
   }
 }
 window.runPendingAnalysis=runPendingAnalysis;
