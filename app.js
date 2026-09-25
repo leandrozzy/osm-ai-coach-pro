@@ -1,6 +1,6 @@
 'use strict';
 
-const V2_VERSION = '2.2.0';
+const V2_VERSION = '2.2.1';
 const STATE_KEY = 'osm_ai_coach_pro_v2_state';
 const SETTINGS_KEY = 'osm_ai_coach_pro_v2_settings';
 const API_KEY_STORAGE = 'osm_ai_coach_pro_gemini_key';
@@ -1162,6 +1162,26 @@ function renderInfo(){
       </div>
     </div>`;
 }
+
+function calendarOutcomeLabel(x){
+  const out=String(x?.outcome||'').toUpperCase();
+  if(out==='V') return 'Vitória';
+  if(out==='E') return 'Empate';
+  if(out==='D') return 'Derrota';
+
+  const r=String(x?.result||'').trim();
+  if(r){
+    const m=r.match(/(\d+)\s*[-x:]\s*(\d+)/i);
+    if(m){
+      const a=Number(m[1]),b=Number(m[2]);
+      if(a>b)return 'Vitória';
+      if(a===b)return 'Empate';
+      if(a<b)return 'Derrota';
+    }
+  }
+  return x?.played?'Jogado':'Futuro';
+}
+
 function calendarTableHtml(rows){
   return `<div class="calendar-wrap"><table class="simple-table calendar-table">
     <thead><tr><th>Rod.</th><th>Tipo</th><th>Local</th><th>Adversário</th><th>Data/hora</th><th>Status</th></tr></thead>
@@ -1171,7 +1191,7 @@ function calendarTableHtml(rows){
       <td>${esc(x.venue)}</td>
       <td>${esc(x.opponent)}</td>
       <td>${esc(x.dateTime?fmtDate(x.dateTime):`${x.dateText||'NI'} ${x.timeText||''}`)}</td>
-      <td>${x.played?`Jogado ${esc(x.result||x.outcome||'')}`:x.skipped?'Ignorado':x.conditional?'Condicional':'Futuro'}</td>
+      <td>${x.played?`${calendarOutcomeLabel(x)}${x.result?` · ${esc(x.result)}`:''}`:x.skipped?'Ignorado':x.conditional?'Condicional':'Futuro'}</td>
     </tr>`).join('')}</tbody>
   </table></div>`;
 }
@@ -1507,7 +1527,9 @@ ${JSON.stringify(ocr.required||{},null,2)}
 Ausentes:
 ${JSON.stringify(ocr.missingRequired||[])}
 
-Extraia meu time, rival, casa/fora, árbitro, força geral, GOL/DEF/MEI/ATA, estádio, humano/CPU, bônus,
+Extraia meu time, rival, casa/fora, árbitro, força geral, GOL/DEF/MEI/ATA, estádio, humano/CPU, bônus de sequência de login,
+ATENÇÃO AO BÔNUS DO RIVAL: na tela inicial/comparação ele pode aparecer por poucos segundos depois da força do time, normalmente como 1%, 2% ou 3%. Se estiver visível em qualquer quadro, grave obrigatoriamente em opponent.loginBonus. Não confunda com meu bônus.
+
 campo de treinamento, treino secreto, formação rival, plano rival, marcação rival e impedimento.
 Humano=true somente se houver nick/manager visível abaixo do adversário.
 Se treino secreto impedir análise rival, mantenha os campos secretos null.
@@ -1523,7 +1545,10 @@ Retorne somente:
 
   if(mode==='market')return base+`
 Analise SOMENTE MEU ELENCO mostrado no vídeo.
-Extraia TODOS os jogadores visíveis ao longo da rolagem.
+Extraia TODOS os jogadores visíveis ao longo de TODA a rolagem do vídeo.
+Não pare nos primeiros jogadores. Compare todos os quadros e consolide nomes repetidos em uma única entrada.
+Se um jogador aparece parcialmente em um quadro e completo em outro, use o quadro mais completo.
+Antes de responder, confira se percorreu todas as posições do elenco: atacantes, meias, defensores e goleiros.
 Leia EXATAMENTE a coluna Pos. Códigos do OSM:
 GR = goleiro; DD/DC/DE = defensores; MDC/MC/MCO/MD/ME = meias; PL/ED/EE = atacantes.
 Camisa laranja = em treinamento, NÃO venda.
@@ -1538,6 +1563,8 @@ Analise SOMENTE o calendário.
 Casinha à esquerda = Casa; sem casinha = Fora.
 Taça/troféu = Copa/Taça.
 V/D/E ou placar = partida já jogada.
+Interprete obrigatoriamente: V = Vitória, E = Empate, D = Derrota.
+Retorne outcome exatamente como V, E ou D quando aparecer.
 Extraia futuras e já jogadas.
 Retorne somente:
 {"matches":[{"round":null,"opponent":null,"competitionType":"league|cup|null","venue":"Casa|Fora|null","dateText":null,"timeText":null,"dateTime":null,"result":null,"outcome":"V|D|E|null","played":false,"conditional":false}]}`;
@@ -1642,7 +1669,7 @@ async function v21Analyze(files){
   setProgress(5,'Selecionando quadros importantes…');
 
   if(video){
-    frames=await v21ExtractVideoFrames(video,analysisMode==='tactic'?18:20);
+    frames=await v21ExtractVideoFrames(video,analysisMode==='tactic'?24:(analysisMode==='market'?28:20));
   }else if(images.length){
     for(const f of images)frames.push(await v21ImageToFrame(f));
   }else{
@@ -1669,6 +1696,19 @@ async function v21Analyze(files){
     }
 
     evidence=selected.filter(x=>x.frame).map(x=>x.frame);
+
+    // Inclui quadros extras da tela inicial/comparação para capturar dados temporários
+    // como o bônus de sequência de login do rival, que aparece por poucos segundos.
+    const matchExtras=(ocr.frames||[])
+      .map(o=>({o,frame:frames[(o.frame||1)-1]}))
+      .filter(x=>x.frame)
+      .map(x=>({x,score:v21BuildFrameClassification(x.o.text,x.frame,selectedSlot()).match_overview||0}))
+      .filter(x=>x.score>=3)
+      .sort((a,b)=>b.score-a.score)
+      .map(x=>x.x.frame)
+      .filter(f=>!evidence.includes(f))
+      .slice(0,3);
+    evidence.push(...matchExtras);
 
     // Se algum quadro do Analista ainda não foi classificado, complementa com
     // os quadros visualmente mais diferentes do vídeo, como fazia a base antiga.
@@ -1698,8 +1738,8 @@ async function v21Analyze(files){
   }
 
   if(analysisMode==='market'){
-    evidence=v21SelectVisualEvidence(frames,3);
-    setProgress(58,'Lendo elenco com o motor da V1…');
+    evidence=v21SelectVisualEvidence(frames,10);
+    setProgress(58,'Lendo elenco completo com o motor da V1…');
     result=await v21AnalyzePackage(ocr,evidence,'market');
     v21ApplyRoster(result);
     saveState();
