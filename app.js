@@ -1,6 +1,6 @@
 'use strict';
 
-const V2_VERSION = '2.0.9';
+const V2_VERSION = '2.0.10';
 const STATE_KEY = 'osm_ai_coach_pro_v2_state';
 const SETTINGS_KEY = 'osm_ai_coach_pro_v2_settings';
 const API_KEY_STORAGE = 'osm_ai_coach_pro_gemini_key';
@@ -52,7 +52,7 @@ function defaultSlot(n){
 function defaultState(){
   return {version:V2_VERSION,selectedSlot:1,slots:[1,2,3,4].map(defaultSlot),archives:[],eventIntel:null,decisionLog:[]};
 }
-function defaultSettings(){ return {userNick:'leandrozzy',model:'gemini-3.8-flash',notifyMinutes:20,notifyEnabled:true,localOcr:true}; }
+function defaultSettings(){ return {userNick:'leandrozzy',model:'gemini-3.5-flash',notifyMinutes:20,notifyEnabled:true,localOcr:true}; }
 
 function deepMerge(a,b){
   if(!b || typeof b!=='object') return a;
@@ -90,7 +90,7 @@ function normalizeSlot(s){
 }
 let state=loadState();
 let settings={...defaultSettings(),...safeParse(localStorage.getItem(SETTINGS_KEY),{})};
-if(!String(settings.model||'').startsWith('gemini-3.')){settings.model='gemini-3.8-flash';localStorage.setItem(SETTINGS_KEY,JSON.stringify(settings));}
+if(!settings.model || settings.model==='gemini-2.5-flash'){settings.model='gemini-3.5-flash';localStorage.setItem(SETTINGS_KEY,JSON.stringify(settings));}
 let analysisMode='tactic';
 let pendingMediaFiles=[];
 let analysisBusy=false;
@@ -412,7 +412,7 @@ async function geminiJson(parts,temperature=.1,maxOutputTokens=5000){
   // Mesmo comportamento da versão antiga:
   // consulta a lista real da chave e percorre TODOS os modelos disponíveis.
   const candidates=await availableModels(key);
-  const ordered=[settings.model,...candidates].filter((x,i,a)=>x&&a.indexOf(x)===i);
+  const ordered=['gemini-3.5-flash',settings.model,...candidates].filter((x,i,a)=>x&&a.indexOf(x)===i);
 
   let last='';
 
@@ -487,11 +487,12 @@ async function availableModels(key){
       .filter(Boolean);
 
     const pref=[
+      'gemini-3.5-flash',
+      'gemini-flash-latest',
+      'gemini-3.5-flash-lite',
       'gemini-3.8-flash',
       'gemini-3.7-flash',
-      'gemini-3.6-flash',
-      'gemini-3.5-flash-lite',
-      'gemini-3.5-flash'
+      'gemini-3.6-flash'
     ];
 
     return [
@@ -506,11 +507,12 @@ async function availableModels(key){
 
 function fallbackModelList(){
   return [
+    'gemini-3.5-flash',
+    'gemini-flash-latest',
+    'gemini-3.5-flash-lite',
     'gemini-3.8-flash',
     'gemini-3.7-flash',
-    'gemini-3.6-flash',
-    'gemini-3.5-flash-lite',
-    'gemini-3.5-flash'
+    'gemini-3.6-flash'
   ];
 }
 
@@ -764,13 +766,143 @@ function buildMarketPlan(s){
 }
 function rosterTable(rows){return `<div style="overflow:auto"><table class="simple-table"><thead><tr><th>Jogador</th><th>Pos.</th><th>Força</th><th>Idade</th><th>Valor/Preço</th><th>Status</th></tr></thead><tbody>${(Array.isArray(rows)?rows:[]).map(p=>`<tr><td>${esc(playerNameValue(p)||'NI')}</td><td>${esc(playerPosValue(p)||'NI')}</td><td>${esc(playerRatingValue(p))}</td><td>${esc(playerAgeValue(p))}</td><td>${esc(playerMoneyValue(p))}</td><td>${p.training===true?'Treino':p.forSale===true?'Venda':'—'}</td></tr>`).join('')}</tbody></table></div>`}
 
+
+function countOsmPositionsFromOcr(text){
+  const t=String(text||'').toUpperCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,' ');
+  const tokens=(t.match(/\b(?:GR|GK|DD|DC|DE|MDC|MC|MCO|MD|ME|PL|ED|EE)\b/g)||[]);
+  const counts={ATA:0,MEI:0,DEF:0,GOL:0};
+  for(const pos of tokens){
+    if(['PL','ED','EE'].includes(pos)) counts.ATA++;
+    else if(['MDC','MC','MCO','MD','ME'].includes(pos)) counts.MEI++;
+    else if(['DD','DC','DE'].includes(pos)) counts.DEF++;
+    else if(['GR','GK'].includes(pos)) counts.GOL++;
+  }
+  return counts;
+}
+function marketValidation(roster,ocrText){
+  const ai=countPositions(Array.isArray(roster)?roster:[]);
+  const ocr=countOsmPositionsFromOcr(ocrText);
+  const diffs=[];
+  for(const p of ['ATA','MEI','DEF','GOL']){
+    // OCR only constrains when it saw at least one code for that line.
+    if(ocr[p]>0 && ai[p]!==ocr[p]) diffs.push(`${p}: IA ${ai[p]} × OCR ${ocr[p]}`);
+  }
+  const totalAi=Object.values(ai).reduce((a,b)=>a+b,0);
+  const totalOcr=Object.values(ocr).reduce((a,b)=>a+b,0);
+  if(totalOcr>=8 && totalAi<totalOcr) diffs.push(`Total: IA ${totalAi} × OCR ${totalOcr}`);
+  return {ok:diffs.length===0,ai,ocr,diffs,totalAi,totalOcr};
+}
+
 async function analyzeMarketFiles(files){
-  const n=Number($('analysisSlot').value)||state.selectedSlot;job('Lendo elenco e mercado…');setProgress(15,'Extraindo mídia…');$('progressWrap').classList.remove('hidden');
+  const n=Number($('analysisSlot').value)||state.selectedSlot;
+  state.selectedSlot=n;
+  job('Lendo elenco com OCR local…');
+  setProgress(10,'Preparando mídia…');
+  $('progressWrap').classList.remove('hidden');
+
   try{
-    const parts=[{text:`Analise imagens de OSM 26. Extraia elenco e lista de transferências. Camisa laranja significa TREINAMENTO, nunca venda. Venda é indicada por setas/ícone de transferência. Não invente. Retorne {"roster":[{"name":null,"position":null,"rating":null,"age":null,"value":null,"training":false,"forSale":false}],"market":[{"name":null,"position":null,"rating":null,"age":null,"price":null}]} JSON estrito.`}];
-    for(const f of files){if(f.type.startsWith('image/'))parts.push({inlineData:{mimeType:f.type,data:await fileToInline(f)}});else if(f.type.startsWith('video/'))for(const b64 of await videoFrames(f,5))parts.push({inlineData:{mimeType:'image/jpeg',data:b64}})}
-    setProgress(65,'Analisando elenco…');const data=await geminiJson(parts,.05,6000);const s=state.slots[n-1];if(Array.isArray(data.roster)&&data.roster.length)s.roster=data.roster;if(Array.isArray(data.market)&&data.market.length)s.market=data.market;s.status='active';s.marketPlan=buildMarketPlan(s);saveState();setProgress(100,'Mercado atualizado');job('Elenco e mercado atualizados.','done');renderMarket();
-  }catch(e){throw e}finally{setTimeout(()=>$('progressWrap').classList.add('hidden'),1000)}
+    const imagePayloads=[];
+
+    for(const f of files){
+      if(f.type.startsWith('image/')){
+        const b64=await fileToInline(f);
+        imagePayloads.push({b64,mimeType:f.type||'image/jpeg'});
+      }else if(f.type.startsWith('video/')){
+        const frames=await videoFrames(f,8);
+        for(const b64 of frames) imagePayloads.push({b64,mimeType:'image/jpeg'});
+      }
+    }
+
+    setProgress(30,'Executando OCR local no elenco…');
+    const ocrText=await buildLocalOcrContext(imagePayloads.map(x=>x.b64));
+
+    const prompt=`Você analisa SOMENTE o MEU ELENCO no OSM 26.
+Use as imagens e o OCR local como evidência. NÃO invente jogadores.
+
+REGRAS IMPORTANTES:
+- Leia a coluna "Pos" exatamente.
+- Códigos válidos:
+  GR = goleiro
+  DD/DC/DE = defensores
+  MDC/MC/MCO/MD/ME = meias
+  PL/ED/EE = atacantes
+- PL, ED e EE contam como ATA.
+- Camisa/ícone laranja = EM TREINAMENTO, não venda.
+- Só marque forSale=true quando houver o indicador de venda/setas.
+- Extraia TODOS os jogadores visíveis no vídeo, consolidando duplicados.
+- Se o vídeo percorre o elenco inteiro, não pare antes do fim.
+- Se algo não estiver legível, use null.
+- Retorne também observedPositionCounts com a contagem que você efetivamente viu.
+
+OCR LOCAL:
+${ocrText}
+
+RETORNE JSON:
+{
+ "roster":[
+   {"name":null,"position":null,"rating":null,"age":null,"value":null,"training":false,"forSale":false}
+ ],
+ "observedPositionCounts":{"ATA":0,"MEI":0,"DEF":0,"GOL":0}
+}`;
+
+    const parts=[{text:prompt}];
+    for(const img of imagePayloads){
+      parts.push({inlineData:{mimeType:img.mimeType,data:img.b64}});
+    }
+
+    setProgress(58,'Interpretando elenco com Gemini…');
+    const data=await geminiJson(parts,.03,6500);
+
+    const roster=Array.isArray(data.roster)?data.roster:[];
+    const validation=marketValidation(roster,ocrText);
+
+    // If Gemini itself reported counts, cross-check those too.
+    const observed=data.observedPositionCounts||{};
+    const aiCounts=countPositions(roster);
+    const modelDiffs=[];
+    for(const p of ['ATA','MEI','DEF','GOL']){
+      const x=Number(observed[p]);
+      if(Number.isFinite(x) && x>0 && aiCounts[p]!==x){
+        modelDiffs.push(`${p}: lista ${aiCounts[p]} × contagem do modelo ${x}`);
+      }
+    }
+
+    const allDiffs=[...validation.diffs,...modelDiffs];
+
+    if(allDiffs.length){
+      const msg=`Leitura incompleta do elenco. ${allDiffs.join(' · ')}`;
+      if($('analysisDiagnostics')) $('analysisDiagnostics').textContent=msg;
+      setProgress(100,'Leitura incompleta — revisar');
+      job(msg,'error');
+      // Keep the detected roster for inspection, but do NOT mark as a successful completed analysis.
+      const s=state.slots[n-1];
+      s.roster=roster;
+      s.marketPlan=buildMarketPlan(s);
+      saveState();
+      renderMarket();
+      return;
+    }
+
+    const s=state.slots[n-1];
+    if(roster.length) s.roster=roster;
+    s.status='active';
+    s.marketPlan=buildMarketPlan(s);
+    s.lastAnalysisAt=nowIso();
+
+    saveState();
+    setProgress(100,'Elenco validado e atualizado');
+    if($('analysisDiagnostics')){
+      $('analysisDiagnostics').textContent=`Elenco validado: ATA ${validation.ai.ATA} · MEI ${validation.ai.MEI} · DEF ${validation.ai.DEF} · GOL ${validation.ai.GOL}.`;
+    }
+    job('Elenco validado e atualizado.','done');
+    renderMarket();
+
+  }catch(e){
+    throw e;
+  }finally{
+    setTimeout(()=>$('progressWrap').classList.add('hidden'),1000);
+  }
 }
 
 function renderLearning(){
