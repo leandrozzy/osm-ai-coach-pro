@@ -5266,3 +5266,250 @@ function tacticModal(n){
     <button class="btn secondary" onclick="openTacticVideoRefreshV59(${n})">Vídeo novo</button>
   </div>`);
 }
+
+
+// ===== v7.8: qualquer dado ausente vira ação corrigível (foto/vídeo/manual) =====
+const MISSING_FIELD_META_V78={
+  referee:{
+    label:'Árbitro',
+    help:'Envie somente a tela principal da partida ou informe manualmente a cor/rigor.',
+    input:'referee'
+  },
+  opponentOverall:{label:'Força rival',help:'Envie a tela principal/força do rival ou digite manualmente.',input:'number'},
+  myOverall:{label:'Minha força',help:'Envie a tela principal ou digite manualmente.',input:'number'},
+  opponentFormation:{label:'Formação rival',help:'Envie a tela do Data Analyst — formação ou selecione manualmente.',input:'formation'},
+  opponentStyle:{label:'Plano rival',help:'Envie a tela do Data Analyst — plano ou selecione manualmente.',input:'gamePlan'},
+  opponentMarking:{label:'Marcação rival',help:'Envie a tela do Data Analyst — plano/marcação ou selecione manualmente.',input:'marking'},
+  opponentOffside:{label:'Fora-de-jogo rival',help:'Envie a tela do Data Analyst — plano/marcação ou selecione manualmente.',input:'yesno'},
+  opponentHuman:{label:'Humano/CPU',help:'Envie a tela principal onde aparece o nome do usuário ou escolha manualmente.',input:'human'},
+  venue:{label:'Casa/Fora',help:'Envie a tela principal ou selecione manualmente.',input:'venue'}
+};
+
+function missingTacticFieldsV78(s){
+  const out=[];
+  if(!refereeColorCanonicalV77(s?.match?.refereeColor))out.push('referee');
+  if(s?.myTeam?.overall==null)out.push('myOverall');
+  if(s?.opponent?.overall==null)out.push('opponentOverall');
+  if(!s?.opponent?.formation)out.push('opponentFormation');
+  if(!s?.opponent?.style)out.push('opponentStyle');
+  if(!s?.opponent?.marking)out.push('opponentMarking');
+  if(s?.opponent?.offside===null||s?.opponent?.offside===undefined)out.push('opponentOffside');
+  if(s?.opponent?.human===null||s?.opponent?.human===undefined)out.push('opponentHuman');
+  if(!s?.match?.venue)out.push('venue');
+  return out;
+}
+
+function showMissingFieldPanelV78(n){
+  const s=state.slots[n-1],missing=missingTacticFieldsV78(s);
+  if(!missing.length){toast('Não há dados obrigatórios faltando.');return}
+  openModal(`<h2>Completar dados · Slot ${n}</h2>
+    <p class="muted">Você pode corrigir cada dado por <b>foto/vídeo</b> ou <b>manual</b>. Não precisa reenviar tudo.</p>
+    <div class="missing-fields-list">
+    ${missing.map(k=>{
+      const m=MISSING_FIELD_META_V78[k];
+      return `<div class="missing-field-card">
+        <div><b>${esc(m.label)}</b><p>${esc(m.help)}</p></div>
+        <div class="missing-actions">
+          <button class="btn tiny" onclick="sendMissingFieldMediaV78(${n},'${k}')">Enviar mídia</button>
+          <button class="btn tiny secondary" onclick="manualMissingFieldV78(${n},'${k}')">Inserir manualmente</button>
+        </div>
+      </div>`;
+    }).join('')}
+    </div>`);
+}
+
+let pendingMissingFieldV78=null;
+
+function sendMissingFieldMediaV78(n,key){
+  pendingMissingFieldV78={slot:n,key};
+  closeModal();
+  setSelectedSlot(n);
+  analysisMode='tactic';
+  showView('analyze');
+  toast(`Envie somente a tela necessária para: ${MISSING_FIELD_META_V78[key].label}`);
+  setTimeout(()=>els.mediaInput?.click(),180);
+}
+
+function manualMissingFieldV78(n,key){
+  const s=state.slots[n-1],meta=MISSING_FIELD_META_V78[key];
+  let body='';
+
+  if(key==='referee'){
+    body=`<label>Cor do árbitro<select id="manualRefereeColor">
+      <option value="">Selecione</option>
+      <option>Verde</option><option>Azul</option><option>Amarelo</option><option>Laranja</option><option>Vermelho</option>
+    </select></label>`;
+  }else if(meta.input==='number'){
+    body=`<label>${esc(meta.label)}<input id="manualMissingValue" type="number" min="0"></label>`;
+  }else if(meta.input==='formation'){
+    body=`<label>${esc(meta.label)}<select id="manualMissingValue">${FORMATIONS.map(x=>`<option>${esc(x)}</option>`).join('')}</select></label>`;
+  }else if(meta.input==='gamePlan'){
+    body=`<label>${esc(meta.label)}<select id="manualMissingValue">
+      <option>Jogar pelas alas</option><option>Jogo de passes</option><option>Bola longa</option><option>Contra-ataque</option><option>Remate à vista</option>
+    </select></label>`;
+  }else if(meta.input==='marking'){
+    body=`<label>${esc(meta.label)}<select id="manualMissingValue"><option>À zona</option><option>Homem-a-homem</option></select></label>`;
+  }else if(meta.input==='yesno'){
+    body=`<label>${esc(meta.label)}<select id="manualMissingValue"><option value="false">Não</option><option value="true">Sim</option></select></label>`;
+  }else if(meta.input==='human'){
+    body=`<label>${esc(meta.label)}<select id="manualMissingValue"><option value="true">Humano</option><option value="false">CPU</option></select></label>`;
+  }else if(meta.input==='venue'){
+    body=`<label>${esc(meta.label)}<select id="manualMissingValue"><option>Casa</option><option>Fora</option></select></label>`;
+  }
+
+  openModal(`<h2>${esc(meta.label)} · manual</h2><div class="form-card">${body}<button class="btn" onclick="saveManualMissingFieldV78(${n},'${key}')">Salvar</button></div>`);
+}
+
+function saveManualMissingFieldV78(n,key){
+  const s=state.slots[n-1];
+  let v;
+
+  if(key==='referee'){
+    v=document.getElementById('manualRefereeColor')?.value;
+    if(!v){toast('Selecione a cor do árbitro');return}
+    s.match.refereeColor=v;
+    s.match.refereeStrictness=refereeStrictnessCanonicalV77(null,v);
+    s.match.refereeConfidence=1;
+  }else{
+    v=document.getElementById('manualMissingValue')?.value;
+    if(v===undefined||v===null||v===''){toast('Informe um valor');return}
+    if(key==='myOverall')s.myTeam.overall=Number(v);
+    else if(key==='opponentOverall')s.opponent.overall=Number(v);
+    else if(key==='opponentFormation')s.opponent.formation=v;
+    else if(key==='opponentStyle')s.opponent.style=v;
+    else if(key==='opponentMarking')s.opponent.marking=v;
+    else if(key==='opponentOffside')s.opponent.offside=v==='true';
+    else if(key==='opponentHuman')s.opponent.human=v==='true';
+    else if(key==='venue')s.match.venue=v;
+  }
+
+  s.updatedAt=nowIso();
+  saveState();
+  closeModal();
+
+  const remaining=missingTacticFieldsV78(s);
+  if(remaining.length){
+    toast(`${MISSING_FIELD_META_V78[key].label} salvo. Ainda faltam ${remaining.length} dado(s).`);
+    showMissingFieldPanelV78(n);
+  }else{
+    toast('Dados completos. Agora você pode gerar a tática.');
+    renderAll();
+  }
+}
+
+async function analyzeSingleMissingFieldV78(file,n,key){
+  const frame=file.type.startsWith('image/') ? await imageFileToFrame(file) : (await extractTacticFramesV72(file))[0];
+  if(!frame)throw new Error('Não consegui ler a mídia enviada.');
+
+  const meta=MISSING_FIELD_META_V78[key];
+  let schemaText='';
+
+  if(key==='referee'){
+    const r=await extractRefereeVisualV77(frame);
+    if(!r.color)throw new Error('Não consegui identificar a cor do árbitro nesta tela.');
+    const s=state.slots[n-1];
+    s.match.refereeColor=r.color;
+    s.match.refereeStrictness=r.strictness;
+    s.match.refereeConfidence=r.confidence;
+    saveState();
+    return;
+  }
+
+  schemaText=`Você está lendo UMA tela específica do OSM 26 para preencher somente o campo "${meta.label}".
+Usuário do dono da conta: leandrozzy.
+Não invente. Retorne APENAS JSON {"value":...}.`;
+
+  if(key==='myOverall'||key==='opponentOverall')schemaText+=` O valor deve ser número inteiro da força geral.`;
+  if(key==='opponentFormation')schemaText+=` Valor deve ser uma formação OSM, ex: 4-3-3 B.`;
+  if(key==='opponentStyle')schemaText+=` Valor deve ser um plano: Jogar pelas alas, Jogo de passes, Bola longa, Contra-ataque ou Remate à vista.`;
+  if(key==='opponentMarking')schemaText+=` Valor: À zona ou Homem-a-homem.`;
+  if(key==='opponentOffside')schemaText+=` Valor boolean true/false.`;
+  if(key==='opponentHuman')schemaText+=` Se existir nome de usuário abaixo do time rival, true; se não existir, false. O usuário leandrozzy é sempre o dono da conta e não conta como rival humano.`;
+  if(key==='venue')schemaText+=` Valor: Casa ou Fora.`;
+
+  const r=await geminiJson([
+    {text:schemaText},
+    {inlineData:{mimeType:frame.mimeType,data:frame.base64}}
+  ],{temperature:0,maxOutputTokens:500});
+
+  const s=state.slots[n-1],v=r?.value;
+  if(v===null||v===undefined||v==='')throw new Error(`Não consegui identificar ${meta.label}.`);
+
+  if(key==='myOverall')s.myTeam.overall=Number(v);
+  else if(key==='opponentOverall')s.opponent.overall=Number(v);
+  else if(key==='opponentFormation')s.opponent.formation=String(v);
+  else if(key==='opponentStyle')s.opponent.style=String(v);
+  else if(key==='opponentMarking')s.opponent.marking=String(v);
+  else if(key==='opponentOffside')s.opponent.offside=!!v;
+  else if(key==='opponentHuman')s.opponent.human=!!v;
+  else if(key==='venue')s.match.venue=String(v);
+
+  s.updatedAt=nowIso();
+  saveState();
+}
+
+// Intercepta upload quando o usuário está corrigindo apenas um campo.
+const handleFiles_beforeV78 = handleFiles;
+async function handleFiles(files){
+  if(pendingMissingFieldV78){
+    const p=pendingMissingFieldV78;
+    pendingMissingFieldV78=null;
+    try{
+      await analyzeSingleMissingFieldV78(files[0],p.slot,p.key);
+      toast(`${MISSING_FIELD_META_V78[p.key].label} atualizado.`);
+      const s=state.slots[p.slot-1],remaining=missingTacticFieldsV78(s);
+      if(remaining.length){
+        showMissingFieldPanelV78(p.slot);
+      }else{
+        renderAll();
+        toast('Todos os dados obrigatórios estão completos.');
+      }
+    }catch(e){
+      console.error(e);
+      toast(e.message||String(e));
+      showMissingFieldPanelV78(p.slot);
+    }
+    return;
+  }
+  return handleFiles_beforeV78(files);
+}
+
+// Gerar tática agora abre o painel de correção em vez de apenas exibir toast.
+const generateTacticForSlot_beforeV78 = generateTacticForSlot;
+async function generateTacticForSlot(n,silent=false){
+  const s=state.slots[n-1];
+  const missing=missingTacticFieldsV78(s);
+  if(missing.length){
+    if(!silent)showMissingFieldPanelV78(n);
+    return;
+  }
+  return generateTacticForSlot_beforeV78(n,silent);
+}
+
+// Recalcular idem.
+const refreshTacticFromSavedDataV59_beforeV78 = refreshTacticFromSavedDataV59;
+async function refreshTacticFromSavedDataV59(n){
+  const s=state.slots[n-1];
+  const missing=missingTacticFieldsV78(s);
+  if(missing.length){
+    showMissingFieldPanelV78(n);
+    return;
+  }
+  return refreshTacticFromSavedDataV59_beforeV78(n);
+}
+
+function missingDataInlineHtmlV78(s){
+  const missing=missingTacticFieldsV78(s);
+  if(!missing.length)return '';
+  return `<div class="missing-inline"><b>⚠ ${missing.length} dado(s) faltando</b><span>${missing.map(k=>MISSING_FIELD_META_V78[k].label).join(' · ')}</span><button class="btn tiny" onclick="showMissingFieldPanelV78(${s.slotNumber})">Completar dados</button></div>`;
+}
+
+// Injeta aviso visível na tela Hoje para não esconder a ação.
+const persistentTacticHtml_beforeV78 = persistentTacticHtml;
+function persistentTacticHtml(s){
+  const base=persistentTacticHtml_beforeV78(s);
+  if(!s||s.status!=='active')return base;
+  const missing=missingTacticFieldsV78(s);
+  if(!missing.length)return base;
+  return `<div class="card tactic-persistent"><span class="eyebrow">DADOS PENDENTES</span><h3>${esc(s.opponent?.teamName||'Próximo adversário')}</h3>${missingDataInlineHtmlV78(s)}</div>`;
+}
