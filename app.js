@@ -1,6 +1,6 @@
 'use strict';
 
-const V2_VERSION = '2.0.6';
+const V2_VERSION = '2.0.7';
 const STATE_KEY = 'osm_ai_coach_pro_v2_state';
 const SETTINGS_KEY = 'osm_ai_coach_pro_v2_settings';
 const API_KEY_STORAGE = 'osm_ai_coach_pro_gemini_key';
@@ -379,126 +379,138 @@ function seekWithTimeout(video,t,timeoutMs=5000){
 
 async function geminiJson(parts,temperature=.1,maxOutputTokens=5000){
   const key=localStorage.getItem(API_KEY_STORAGE);
-  if(!key) throw new Error('Configure a chave Gemini');
+  if(!key) throw new Error('API Gemini não configurada.');
 
-  const preferred=settings.model||'gemini-3.8-flash';
-  const models=[preferred,'gemini-3.8-flash','gemini-3.7-flash','gemini-3.6-flash','gemini-3.5-flash']
-    .filter((x,i,a)=>a.indexOf(x)===i);
+  const candidates=await availableModels(key);
+  const ordered=[settings.model,...candidates].filter((x,i,a)=>x&&a.indexOf(x)===i);
+  let last='';
 
-  const transientStatuses=new Set([408,429,500,502,503,504]);
-  let lastError=null;
-
-  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-
-  for(let mi=0; mi<models.length; mi++){
-    const model=models[mi];
-
-    for(let attempt=1; attempt<=2; attempt++){
+  for(const model of ordered){
+    for(let tryNo=0; tryNo<2; tryNo++){
       if($('analysisDiagnostics')){
-        $('analysisDiagnostics').textContent=`Gemini: ${model} · tentativa ${attempt}/2`;
+        $('analysisDiagnostics').textContent=`Gemini: ${model} · tentativa ${tryNo+1}/2`;
       }
-      if(typeof job==='function'){
-        job(`Consultando ${model}${attempt>1?' novamente':''}…`);
-      }
+      job(`Consultando ${model}…`);
 
-      const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
       const body={
         contents:[{role:'user',parts}],
-        generationConfig:{temperature,maxOutputTokens,responseMimeType:'application/json'}
+        generationConfig:{
+          temperature,
+          maxOutputTokens,
+          responseMimeType:'application/json'
+        }
       };
 
+      let res;
       try{
-        const response=await fetch(url,{
-          method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body:JSON.stringify(body)
-        });
+        res=await geminiFetch(model,key,body);
+      }catch(e){
+        last=e.message;
+        await new Promise(r=>setTimeout(r,800));
+        continue;
+      }
 
-        const raw=await response.text();
-
-        if(!response.ok){
-          let msg=raw;
-          try{msg=JSON.parse(raw)?.error?.message||raw}catch{}
-          lastError=new Error(`Gemini ${response.status}: ${String(msg).slice(0,260)}`);
-
-          if(response.status===404){
-            break; // modelo inexistente/indisponível: pula para o próximo
-          }
-
-          if(transientStatuses.has(response.status)){
-            if(attempt<2){
-              if($('analysisDiagnostics')) $('analysisDiagnostics').textContent=`${model} ocupado. Tentando novamente…`;
-              await sleep(attempt===1?900:1600);
-              continue;
-            }
-            break; // após 2 tentativas, tenta outro modelo
-          }
-
-          throw lastError;
-        }
-
-        let data;
-        try{data=JSON.parse(raw)}catch{throw new Error('Resposta inválida da API Gemini')}
-
-        const out=(data.candidates||[])
-          .flatMap(c=>c?.content?.parts||[])
-          .map(p=>p?.text||'')
+      if(res.ok){
+        const data=await res.json();
+        const text=(data.candidates?.[0]?.content?.parts||[])
+          .map(p=>p.text||'')
           .join('')
           .trim();
 
-        if(!out) throw new Error('Gemini não retornou conteúdo');
+        if(!text) throw new Error('A IA não retornou conteúdo utilizável.');
 
-        let parsed;
-        try{
-          parsed=JSON.parse(out);
-        }catch{
-          const cleaned=out.replace(/^```json\s*/i,'').replace(/```$/,'').trim();
-          parsed=JSON.parse(cleaned);
+        settings.model=model;
+        saveSettings();
+        hydrateSettings();
+
+        if($('analysisDiagnostics')){
+          $('analysisDiagnostics').textContent=`Análise concluída com ${model}.`;
         }
-
-        if(settings.model!==model){
-          settings.model=model;
-          saveSettings();
-          if($('modelSelect')) $('modelSelect').value=model;
-        }
-
-        if($('analysisDiagnostics')) $('analysisDiagnostics').textContent=`Análise concluída com ${model}.`;
-        return parsed;
-
-      }catch(e){
-        lastError=e;
-        const msg=String(e?.message||e);
-
-        // erros de rede também recebem uma segunda tentativa
-        const networkish=/Failed to fetch|NetworkError|Load failed|connection/i.test(msg);
-        if(networkish && attempt<2){
-          if($('analysisDiagnostics')) $('analysisDiagnostics').textContent=`Falha de rede em ${model}. Tentando novamente…`;
-          await sleep(900);
-          continue;
-        }
-
-        if(networkish) break;
-
-        if(/Gemini (408|429|500|502|503|504)/.test(msg)){
-          if(attempt<2){
-            await sleep(900);
-            continue;
-          }
-          break;
-        }
-
-        if(/Gemini 404/.test(msg)) break;
-
-        throw e;
+        return parseJsonText(text);
       }
-    }
 
-    if(mi<models.length-1 && $('analysisDiagnostics')){
-      $('analysisDiagnostics').textContent=`Modelo indisponível/ocupado. Tentando ${models[mi+1]}…`;
+      const status=res.status;
+      const txt=await res.text();
+      last=`Gemini ${status}: ${txt.slice(0,260)}`;
+
+      // Igual à versão antiga: só repete indisponibilidade temporária.
+      if(![429,500,502,503,504].includes(status)) break;
+      await new Promise(r=>setTimeout(r,1600*(tryNo+1)));
     }
   }
 
-  throw lastError||new Error('Nenhum modelo Gemini respondeu. Tente novamente em alguns instantes.');
+  throw new Error(last||'Gemini temporariamente indisponível.');
+}
+
+async function availableModels(key){
+  try{
+    const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`);
+    if(!r.ok) return fallbackModelList();
+
+    const d=await r.json();
+    const names=(d.models||[])
+      .filter(m=>(m.supportedGenerationMethods||[]).includes('generateContent'))
+      .map(m=>(m.name||'').replace('models/',''))
+      .filter(Boolean);
+
+    const preferred=[
+      'gemini-3.8-flash',
+      'gemini-3.7-flash',
+      'gemini-3.6-flash',
+      'gemini-3.5-flash-lite',
+      'gemini-3.5-flash'
+    ];
+
+    const ordered=[
+      ...preferred.filter(x=>names.includes(x)),
+      ...names.filter(x=>/flash/i.test(x) && !preferred.includes(x)),
+      ...names.filter(x=>!preferred.includes(x) && !/flash/i.test(x))
+    ];
+
+    return ordered.length ? ordered : fallbackModelList();
+  }catch{
+    return fallbackModelList();
+  }
+}
+
+function fallbackModelList(){
+  return [
+    'gemini-3.8-flash',
+    'gemini-3.7-flash',
+    'gemini-3.6-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-3.5-flash'
+  ];
+}
+
+function geminiFetch(model,key,body){
+  // Mesmo formato da V1 que já funcionava: chave no header x-goog-api-key.
+  return fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+    {
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json',
+        'x-goog-api-key':key
+      },
+      body:JSON.stringify(body)
+    }
+  );
+}
+
+function parseJsonText(text){
+  let s=String(text||'').trim()
+    .replace(/^```(?:json)?/i,'')
+    .replace(/```$/,'')
+    .trim();
+
+  try{
+    return JSON.parse(s);
+  }catch{
+    const a=s.indexOf('{'),b=s.lastIndexOf('}');
+    if(a>=0 && b>a) return JSON.parse(s.slice(a,b+1));
+    throw new Error('Resposta da IA não veio em JSON válido.');
+  }
 }
 
 
