@@ -52,3 +52,20 @@ SE A VERCEL NÃO CRIAR PREVIEW AUTOMÁTICO
 - volte para Deployments e use Redeploy no commit da v2-development se ele aparecer.
 
 NÃO PROMOVER PARA PRODUÇÃO AINDA.
+
+
+CORREÇÃO v2.0.1 - MIGRAÇÃO DA V1
+---------------------------------
+O Preview da Vercel possui domínio diferente da produção e, por segurança do navegador,
+não consegue ler o localStorage do endereço antigo.
+
+Para migrar:
+1. Abra a versão ATUAL/produção.
+2. Vá em Config > Backup > Exportar backup.
+3. Salve o arquivo JSON no celular.
+4. Abra a V2 Preview.
+5. Config > Importar backup da V1.
+6. Escolha o JSON exportado da versão atual.
+7. A V2 converterá os 4 slots, histórico e dados compatíveis.
+
+Não use "Importar backup" da V2 para esse primeiro arquivo antigo; use "Importar backup da V1".

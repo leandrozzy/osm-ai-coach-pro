@@ -523,10 +523,41 @@ function checkNotifications(){
   for(const s of state.slots){if(s.status!=='active'||!s.match.nextMatchAt)continue;const d=new Date(s.match.nextMatchAt).getTime()-Date.now(),target=(settings.notifyMinutes||20)*60000;if(d>0&&d<=target&&!sessionStorage.getItem('notif_'+s.slotNumber+'_'+s.match.nextMatchAt)){new Notification(`OSM · Slot ${s.slotNumber}`,{body:`${s.teamName||'Seu time'} × ${s.opponent.teamName||'adversário'} em ${countdown(s.match.nextMatchAt)}`});sessionStorage.setItem('notif_'+s.slotNumber+'_'+s.match.nextMatchAt,'1')}}
 }
 function migrateV1(){
-  const oldKey=OLD_KEYS.find(k=>localStorage.getItem(k));if(!oldKey){toast('Nenhum estado antigo encontrado neste navegador');return}
-  const raw=safeParse(localStorage.getItem(oldKey),null);if(!raw?.slots){toast('Backup antigo inválido');return}
-  state.slots=[1,2,3,4].map(n=>{const old=raw.slots.find(x=>Number(x.slotNumber)===n)||{};const s=normalizeSlot(deepMerge(defaultSlot(n),old));for(const [p] of FIELD_DEFS){const v=getPath(s,p);if(hasValue(v)||typeof v==='boolean')s.fieldMeta[p]={source:'manual',confidence:.85,updatedAt:nowIso()}}calcQuality(s);return s});
-  state.archives=Array.isArray(raw.archives)?raw.archives:state.archives;saveState();toast('Dados da V1 importados sem apagar o original');
+  const oldKey=OLD_KEYS.find(k=>localStorage.getItem(k));
+  if(oldKey){
+    const raw=safeParse(localStorage.getItem(oldKey),null);
+    if(raw?.slots){
+      importV1State(raw);
+      toast('Dados da V1 importados deste navegador');
+      return;
+    }
+  }
+  const input=$('v1ImportInput');
+  if(input){input.value='';input.click()}
+}
+function importV1State(raw){
+  const src = raw?.state?.slots ? raw.state : (raw?.slots ? raw : (raw?.data?.slots ? raw.data : null));
+  if(!src?.slots) throw new Error('Backup da V1 não reconhecido');
+  state.slots=[1,2,3,4].map(n=>{
+    const old=src.slots.find(x=>Number(x.slotNumber)===n)||{};
+    const s=normalizeSlot(deepMerge(defaultSlot(n),old));
+    for(const [p] of FIELD_DEFS){
+      const v=getPath(s,p);
+      if(hasValue(v)||typeof v==='boolean') s.fieldMeta[p]={source:'manual',confidence:.85,updatedAt:nowIso()};
+    }
+    calcQuality(s);
+    return s;
+  });
+  state.archives=Array.isArray(src.archives)?src.archives:state.archives;
+  if(src.eventIntel) state.eventIntel=src.eventIntel;
+  state.selectedSlot=1;
+  saveState();
+}
+async function importV1BackupFile(file){
+  if(!file) return;
+  const obj=JSON.parse(await file.text());
+  importV1State(obj);
+  toast('Backup da V1 convertido e importado com sucesso');
 }
 function exportBackup(){
   const blob=new Blob([JSON.stringify({state,settings,exportedAt:nowIso()},null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`osm-coach-v2-backup-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)
@@ -544,7 +575,7 @@ function bind(){
   ['dragenter','dragover'].forEach(ev=>$('uploadZone').addEventListener(ev,e=>{e.preventDefault();$('uploadZone').classList.add('drag')}));
   ['dragleave','drop'].forEach(ev=>$('uploadZone').addEventListener(ev,e=>{e.preventDefault();$('uploadZone').classList.remove('drag')}));
   $('uploadZone').addEventListener('drop',e=>handleFiles([...e.dataTransfer.files]));
-  $('refreshBtn').onclick=()=>{renderAll();checkNotifications();toast('Atualizado')};$('saveSettingsBtn').onclick=saveSettingsUi;$('notifyBtn').onclick=requestNotifications;$('migrateBtn').onclick=migrateV1;$('exportBtn').onclick=exportBackup;$('importInput').onchange=async()=>{try{await importBackup($('importInput').files[0])}catch(e){toast(e.message)}};
+  $('refreshBtn').onclick=()=>{renderAll();checkNotifications();toast('Atualizado')};$('saveSettingsBtn').onclick=saveSettingsUi;$('notifyBtn').onclick=requestNotifications;$('migrateBtn').onclick=migrateV1;$('v1ImportInput').onchange=async()=>{try{await importV1BackupFile($('v1ImportInput').files[0])}catch(e){toast(e.message)}};$('exportBtn').onclick=exportBackup;$('importInput').onchange=async()=>{try{await importBackup($('importInput').files[0])}catch(e){toast(e.message)}};
   $('marketAnalyzeBtn').onclick=()=>{const s=selectedSlot();s.marketPlan=buildMarketPlan(s);saveState();renderMarket();toast('Plano recalculado')};
 }
 document.addEventListener('DOMContentLoaded',()=>{bind();renderAll();setAnalysisMode('tactic');setInterval(checkNotifications,30000);checkNotifications()});
