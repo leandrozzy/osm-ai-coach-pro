@@ -3616,3 +3616,263 @@ function showView(name){
  if(name==='analyze'){if(els.slotTarget)els.slotTarget.value=String(selectedSlot);renderAnalysisMode();restoreAnalysisUiV54()}
 }
 function renderAll(){renderToday();renderMarket();renderLearning();renderHistory();hydrateSettings()}
+
+
+// ===== v7.2: captura adaptativa + completar somente telas faltantes =====
+const tacticPartialV72={};
+let pendingTacticSupplementV72=null;
+
+function tacticLabelMapV72(){
+ return {
+  match_overview:'1. Tela da partida',
+  my_squad:'2. Meu elenco / força por setor',
+  opponent_squad:'3. Elenco do adversário / força por setor',
+  analyst_report:'4. Analista — relatório',
+  analyst_plan:'5. Analista — plano, marcação e impedimento',
+  analyst_formation:'6. Analista — formação'
+ };
+}
+function tacticNeedsV72(){return Object.keys(tacticLabelMapV72())}
+function getTacticPartialV72(slot){
+ if(!tacticPartialV72[slot])tacticPartialV72[slot]={items:{},updatedAt:null};
+ return tacticPartialV72[slot];
+}
+function saveTacticItemV72(slot,item){
+ if(!item?.type||!item?.frame)return;
+ const p=getTacticPartialV72(slot);
+ p.items[item.type]={...item};
+ p.updatedAt=nowIso();
+}
+function mergeTacticSelectionV72(slot,items){
+ for(const item of items||[])if(item?.frame)saveTacticItemV72(slot,item);
+ const p=getTacticPartialV72(slot),labels=tacticLabelMapV72();
+ return tacticNeedsV72().map(type=>p.items[type]?{...p.items[type],label:labels[type]}:{type,label:labels[type],frame:null,text:null,score:0});
+}
+function missingTacticTypesV72(items){return (items||[]).filter(x=>!x.frame).map(x=>x.type)}
+function resetTacticPartialV72(slot){delete tacticPartialV72[slot]}
+
+function renderRequiredTacticPreviewV72(items,slot=selectedSlot){
+ const labels=tacticLabelMapV72(),missing=missingTacticTypesV72(items);
+ if(!els.mediaPreview)return;
+ els.mediaPreview.innerHTML=`<div class="required-preview-grid">${items.map(x=>x.frame?`<div class="required-screen ok">
+   <img src="${x.frame.dataUrl}"><b>${esc(labels[x.type]||x.label)}</b><span>detectada</span>
+  </div>`:`<div class="required-screen missing">
+   <div class="required-missing">Faltou</div><b>${esc(labels[x.type]||x.label)}</b>
+   <button class="btn tiny" onclick="sendOnlyMissingTacticV72('${x.type}',${slot})">Enviar só esta tela</button>
+  </div>`).join('')}
+  ${missing.length?`<div class="missing-helper"><b>Faltam ${missing.length} tela(s).</b><p>Você não precisa enviar o vídeo inteiro novamente. Envie uma imagem ou um vídeo curto mostrando apenas a tela faltante.</p><button class="btn secondary" onclick="sendAllMissingTacticV72(${slot})">Enviar somente as telas faltantes</button></div>`:''}
+ </div>`;
+}
+function sendOnlyMissingTacticV72(type,slot){
+ pendingTacticSupplementV72={slot:Number(slot),types:[type]};
+ setSelectedSlot(Number(slot));analysisMode='tactic';
+ document.querySelectorAll('[data-analysis-mode]').forEach(x=>x.classList.toggle('active',x.dataset.analysisMode==='tactic'));
+ renderAnalysisMode();showView('analyze');
+ toast(`Envie apenas: ${tacticLabelMapV72()[type]}`);
+ setTimeout(()=>els.mediaInput?.click(),180);
+}
+function sendAllMissingTacticV72(slot){
+ const partial=mergeTacticSelectionV72(slot,[]);
+ const types=missingTacticTypesV72(partial);
+ if(!types.length){toast('As 6 telas já estão completas.');return}
+ pendingTacticSupplementV72={slot:Number(slot),types};
+ setSelectedSlot(Number(slot));analysisMode='tactic';renderAnalysisMode();showView('analyze');
+ toast('Envie imagens ou um vídeo curto apenas com as telas que faltaram.');
+ setTimeout(()=>els.mediaInput?.click(),180);
+}
+
+function frameTimeSpreadV72(frames,limit){
+ const sorted=[...frames].sort((a,b)=>(a.time||0)-(b.time||0)),out=[];
+ for(const f of sorted){
+  if(!out.length||Math.abs((f.time||0)-(out[out.length-1].time||0))>=.7)out.push(f);
+ }
+ if(out.length<=limit)return out;
+ const picks=[];
+ for(let i=0;i<limit;i++)picks.push(out[Math.round(i*(out.length-1)/(limit-1))]);
+ return [...new Set(picks)];
+}
+async function extractTacticFramesV72(file){
+ const url=URL.createObjectURL(file),v=document.createElement('video');v.src=url;v.muted=true;v.playsInline=true;v.preload='metadata';
+ await new Promise((res,rej)=>{v.onloadedmetadata=res;v.onerror=()=>rej(new Error(`Não consegui abrir ${file.name}`))});
+ const dur=Math.max(.2,v.duration||1),step=dur<=40?.24:dur<=70?.32:.45,candidates=[];let prev=null;
+ for(let t=.03;t<dur;t+=step){
+  await seekVideo(v,Math.min(t,dur-.04));
+  const f=captureVideoFrame(v,t,file.name);f.score=prev?frameDistance(f,prev):100;candidates.push(f);prev=f;
+  if(candidates.length>260)break;
+ }
+ URL.revokeObjectURL(url);
+
+ // Mantém muito mais variedade temporal na região do Data Analyst.
+ const analyst=candidates.filter(f=>(f.layout?.leftWhite||0)>.22 && ((f.layout?.rightBlue||0)>.05||(f.layout?.rightGreen||0)>.05));
+ const squad=candidates.filter(f=>(f.layout?.bottomWhite||0)>.25 && (f.layout?.leftWhite||0)<.38);
+ const match=candidates.filter(f=>(f.layout?.dark||0)>.28 && (f.layout?.bottomWhite||0)<.32);
+
+ const chosen=[];
+ const add=(arr,n)=>{
+   const temporal=frameTimeSpreadV72(arr,n*2);
+   const diversity=chooseDiverseFrames(arr,n);
+   for(const f of [...temporal,...diversity])if(f&&!chosen.includes(f))chosen.push(f);
+ };
+ add(match,4);add(squad,7);add(analyst,12);
+ // Inclui começo/meio/fim sempre.
+ const anchors=[candidates[0],candidates[Math.floor(candidates.length*.25)],candidates[Math.floor(candidates.length*.5)],candidates[Math.floor(candidates.length*.75)],candidates[candidates.length-1]];
+ for(const f of anchors)if(f&&!chosen.includes(f))chosen.push(f);
+
+ return frameTimeSpreadV72(chosen,22);
+}
+
+async function classifySupplementForTypesV72(frames,ocr,types,slot){
+ const labels=tacticLabelMapV72(),s=state.slots[slot-1]||{};
+ const parts=[{text:`Classifique quadros do OSM 26 SOMENTE para as categorias faltantes abaixo:
+${types.map(t=>`${t} = ${labels[t]}`).join('\n')}
+
+Regras:
+- escolha no máximo um quadro diferente para cada categoria;
+- analyst_report = folha branca/texto do relatório;
+- analyst_plan = setas vermelhas/plano + marcação/fora-de-jogo;
+- analyst_formation = campo verde com formação/jogadores/suplentes;
+- se foi enviada UMA imagem pelo botão de uma categoria específica, só retorne essa categoria se visualmente compatível;
+- não invente.
+Retorne JSON com índices 1-based apenas para essas chaves e confidence.
+Contexto: meu time ${s.teamName||'NI'}, rival ${s.opponent?.teamName||'NI'}.
+OCR:\n${ocr.joined}`}];
+ frames.forEach((f,i)=>parts.push({text:`QUADRO ${i+1}`},{inlineData:{mimeType:f.mimeType,data:f.base64}}));
+ return geminiJson(parts,{temperature:.01,maxOutputTokens:800});
+}
+function selectionForTypesV72(map,frames,ocr,types){
+ const labels=tacticLabelMapV72(),used=new Set(),out=[];
+ for(const type of types){
+  const idx=Number(map?.[type]);
+  if(Number.isInteger(idx)&&idx>=1&&idx<=frames.length&&!used.has(idx)){
+   used.add(idx);const o=(ocr.frames||[]).find(x=>Number(x.frame)===idx);
+   out.push({type,label:labels[type],frame:frames[idx-1],text:o?.text||'',score:100});
+  }else out.push({type,label:labels[type],frame:null,text:null,score:0});
+ }
+ return out;
+}
+async function finishTacticFromPartialV72(slot){
+ const items=mergeTacticSelectionV72(slot,[]);
+ const missing=missingTacticTypesV72(items);
+ renderRequiredTacticPreviewV72(items,slot);
+ if(missing.length){
+  const names=missing.map(t=>tacticLabelMapV72()[t]);
+  const err=new Error(`Faltaram ${missing.length} tela(s): ${names.join(', ')}. Use os botões "Enviar só esta tela" para continuar sem repetir o vídeo inteiro.`);
+  err.requiredMissing=names;throw err;
+ }
+ const frames=items.map(x=>x.frame),ocr={mode:'tactic',frames:items.map((x,i)=>({frame:i+1,time:Math.round(x.frame.time||0),confidence:null,text:x.text||''})),joined:items.map((x,i)=>`[Tela ${i+1}] ${x.text||''}`).join('\n\n')};
+ setProgress(66,'6 telas completas · gerando tática…');
+ const result=await analyzeOcrPackage(ocr,frames);applyVisionResult(result);applyRecommendedTactics(result);
+ if(slot===selectedSlot&&analysisMode==='tactic')renderAnalysisResult(result);
+ const ss=state.slots[slot-1];ss.lastAnalysisByMode=ss.lastAnalysisByMode||{};ss.lastAnalysisByMode.tactic=nowIso();ss.lastAnalysisError=ss.lastAnalysisError||{};delete ss.lastAnalysisError.tactic;
+ saveState();resetTacticPartialV72(slot);return result;
+}
+async function handleTacticSupplementV72(files){
+ const p=pendingTacticSupplementV72;if(!p)return false;
+ pendingTacticSupplementV72=null;
+ const slot=p.slot,types=p.types;
+ let frames=[];const video=files.find(f=>f.type.startsWith('video/')),images=files.filter(f=>f.type.startsWith('image/'));
+ if(video)frames=await extractTacticFramesV72(video);
+ else for(const f of images.slice(0,Math.max(1,types.length*2)))frames.push(await imageFileToFrame(f));
+ if(!frames.length)throw new Error('Não encontrei imagem utilizável.');
+ setProgress(18,'Lendo somente a tela faltante…');
+ const ocr=await runLocalOcr(frames);
+ let map={};
+ if(frames.length===1&&types.length===1){
+   // botão específico: aceita diretamente uma imagem única, mas ainda usa a IA na geração final.
+   map[types[0]]=1;
+ }else{
+   map=await classifySupplementForTypesV72(frames,ocr,types,slot);
+ }
+ const found=selectionForTypesV72(map,frames,ocr,types);
+ for(const x of found)if(x.frame)saveTacticItemV72(slot,x);
+ const merged=mergeTacticSelectionV72(slot,found);
+ renderRequiredTacticPreviewV72(merged,slot);
+ const remaining=missingTacticTypesV72(merged);
+ if(!remaining.length){
+   await finishTacticFromPartialV72(slot);
+   toast('Telas completadas e tática gerada.');
+ }else{
+   const names=remaining.map(t=>tacticLabelMapV72()[t]).join(', ');
+   const ss=state.slots[slot-1];ss.lastAnalysisError=ss.lastAnalysisError||{};ss.lastAnalysisError.tactic=`Ainda falta: ${names}`;saveState();
+   toast(`Ainda falta: ${names}`);
+ }
+ return true;
+}
+
+// Override final do fluxo de arquivos.
+async function handleFiles(files){
+ runtimeCheckV56();
+ if(!files.length)return;
+ if(!localStorage.getItem(API_KEY_STORAGE)){apiModal('Antes de analisar, salve sua chave Gemini.');return}
+ if(activeAnalysisJobV54?.status==='busy'){toast(`Já existe uma leitura em andamento no Slot ${activeAnalysisJobV54.slot}`);return}
+
+ const supplement=!!pendingTacticSupplementV72;
+ const jobMode=supplement?'tactic':analysisMode,jobSlot=supplement?pendingTacticSupplementV72.slot:selectedSlot;
+ const labels={tactic:'Tática',market:'Elenco',calendar:'Calendário',result:'Resultado'};
+ activeAnalysisJobV54={slot:jobSlot,mode:jobMode,modeLabel:supplement?'Completar tática':(labels[jobMode]||jobMode),status:'busy',progress:1,text:'Iniciando…',startedAt:nowIso()};
+ analysisTargetOverrideV54=jobSlot;renderGlobalJobV54();await acquireOcrWakeLock();
+ if(els.analysisProgress)els.analysisProgress.classList.remove('hidden');
+
+ try{
+  if(supplement){
+   await handleTacticSupplementV72(files);
+  }else if(jobMode==='calendar'){
+   if(els.mediaPreview)els.mediaPreview.innerHTML='';
+   const video=files.find(f=>f.type.startsWith('video/')),images=files.filter(f=>f.type.startsWith('image/'));let frames=[];
+   if(video)frames=await extractUniformFramesV54(video,6);else for(const f of images.slice(0,6))frames.push(await imageFileToFrame(f));
+   if(!frames.length)throw new Error('Não encontrei imagens no vídeo do calendário.');
+   if(jobSlot===selectedSlot&&analysisMode===jobMode)renderFramePreview(frames);
+   setProgress(35,'Lendo calendário completo…');const result=await analyzeCalendarFramesV54(frames,jobSlot);applyCalendarResultV54(result,jobSlot);
+   if(jobSlot===selectedSlot&&analysisMode===jobMode)renderCalendarResultV54(result,jobSlot);
+  }else{
+   const video=files.find(f=>f.type.startsWith('video/')),images=files.filter(f=>f.type.startsWith('image/'));let frames=[];
+   if(jobMode==='tactic'&&video){setProgress(5,'Varredura adaptativa do vídeo…');frames=await extractTacticFramesV72(video)}
+   else if(video){setProgress(6,'Selecionando quadros úteis…');frames=await extractVideoFramesFast(video,frameLimitForMode(jobMode))}
+   else for(const f of images.slice(0,jobMode==='tactic'?18:frameLimitForMode(jobMode)))frames.push(await imageFileToFrame(f));
+   if(!frames.length)throw new Error('Não encontrei quadros utilizáveis no vídeo.');
+
+   if(jobMode==='tactic'){
+    setProgress(15,`OCR em ${frames.length} quadros candidatos…`);const ocr=await runLocalOcr(frames);
+    const selected=await selectRequiredTacticFramesRobustV56(frames,ocr,jobSlot);
+    const merged=mergeTacticSelectionV72(jobSlot,selected);
+    if(jobSlot===selectedSlot&&analysisMode==='tactic')renderRequiredTacticPreviewV72(merged,jobSlot);
+    await finishTacticFromPartialV72(jobSlot);
+   }else{
+    if(jobSlot===selectedSlot&&analysisMode===jobMode)renderFramePreview(frames.slice(0,8));
+    setProgress(18,`OCR local em ${frames.length} quadros…`);const ocr=await runLocalOcr(frames);
+    if(jobMode==='result'){
+      const evidence=selectVisualEvidence(frames,evidenceLimitForMode(jobMode));setProgress(58,'Lendo resultado e cartões…');
+      const result=await analyzeResultOcr(ocr,evidence);await applyResultVideoV54(result,jobSlot);
+      if(jobSlot===selectedSlot&&analysisMode===jobMode)renderResultVideo(result);
+    }else{
+      const evidence=selectVisualEvidence(frames,evidenceLimitForMode(jobMode));setProgress(58,'Lendo elenco e posições…');
+      const result=await analyzeOcrPackage(ocr,evidence);applyVisionResult(result);
+      const ss=state.slots[jobSlot-1];ss.roster=(ss.roster||[]).map(p=>({...p,sector:normalizeRosterSectorV55(p),training:p.training===true}));finalizeRosterSnapshotV57(ss);ss.lastRosterSnapshotAt=nowIso();ss.market=[];
+      if(jobSlot===selectedSlot&&analysisMode===jobMode)renderAnalysisResult(result);
+    }
+   }
+  }
+
+  const ss=state.slots[jobSlot-1];ss.lastAnalysisByMode=ss.lastAnalysisByMode||{};ss.lastAnalysisByMode[jobMode]=nowIso();
+  state.lastAnalysisAt=nowIso();saveState();setProgress(100,'Concluído');
+  activeAnalysisJobV54.status='done';activeAnalysisJobV54.text='Concluído';renderGlobalJobV54();cacheAnalysisUiV54(jobSlot,jobMode);
+  setTimeout(()=>{if(activeAnalysisJobV54?.status==='done'){activeAnalysisJobV54=null;renderGlobalJobV54()}},5000);
+ }catch(e){
+  console.error(e);
+  const ss=state.slots[jobSlot-1];ss.lastAnalysisError=ss.lastAnalysisError||{};ss.lastAnalysisError[jobMode]=String(e.message||e);saveState();
+  activeAnalysisJobV54.status='error';activeAnalysisJobV54.text=String(e.message||e);activeAnalysisJobV54.progress=100;renderGlobalJobV54();
+  if(jobMode==='tactic'){
+    const merged=mergeTacticSelectionV72(jobSlot,[]);
+    if(jobSlot===selectedSlot&&analysisMode==='tactic'){
+      renderRequiredTacticPreviewV72(merged,jobSlot);
+      els.analysisResult.innerHTML=`<div class="result-card"><h3 class="warn-text">Leitura parcial salva</h3><p>${esc(e.message||e)}</p><p class="muted small">As telas já detectadas foram preservadas. Envie somente o que faltou.</p></div>`;
+    }
+  }else if(jobSlot===selectedSlot&&analysisMode===jobMode){
+    els.analysisResult.innerHTML=`<div class="result-card"><h3 class="danger-text">Falha na análise</h3><p>${esc(e.message||e)}</p></div>`;
+  }
+  cacheAnalysisUiV54(jobSlot,jobMode);
+ }finally{
+  analysisTargetOverrideV54=null;await releaseOcrWakeLock();
+  setTimeout(()=>els.analysisProgress?.classList.add('hidden'),1200);
+ }
+}
