@@ -4797,3 +4797,224 @@ setTimeout(()=>{
     if(changed){saveState();renderAll()}
   }catch(e){console.error(e)}
 },350);
+
+
+// ===== v7.6.1 HOTFIX: remove wrappers recursivos da v7.6 =====
+// As definições abaixo são finais e independentes: não chamam aliases "beforeV76".
+
+function fallbackTacticV58(s){
+  const audit=strengthAuditV75(s);
+  if(!audit.verified){
+    throw new Error('Não foi possível confirmar qual lado é leandrozzy. Reanalise o vídeo.');
+  }
+
+  const reg=tacticRegimeV73(s);
+  const tackling=normalizeTacklingV60(refereeTackling(s,s),'Normal');
+
+  if(['severe-underdog','underdog','slight-underdog'].includes(reg)){
+    const b=underdogBaseV73(s);
+    return {
+      formation:b.formation,gamePlan:b.gamePlan,pressure:b.pressure,mentality:b.mentality,tempo:b.tempo,
+      marking:'À zona',offside:'Não',tackling,
+      attackInstruction:b.attack,midfieldInstruction:b.mid,defenceInstruction:b.def,
+      confidence:'alta',
+      reason:`Fallback underdog: ${explainBaseV73(s,b)}. ${tacklingReasonV76(s,tackling)}.`,
+      generatedAt:nowIso(),engine:'Local v7.6.1',identityVerified:true
+    };
+  }
+
+  if(reg==='balanced'){
+    const b=balancedBaseV73(s);
+    return {
+      formation:b.formation,gamePlan:b.gamePlan,pressure:b.pressure,mentality:b.mentality,tempo:b.tempo,
+      marking:'À zona',offside:'Não',tackling,
+      attackInstruction:b.attack,midfieldInstruction:b.mid,defenceInstruction:b.def,
+      confidence:'média',
+      reason:`Fallback equilibrado: ${explainBaseV73(s,b)}. ${tacklingReasonV76(s,tackling)}.`,
+      generatedAt:nowIso(),engine:'Local v7.6.1',identityVerified:true
+    };
+  }
+
+  const d=dominantBaseV58(s);
+  const lines=linePolicyV58(s,d.formation,d.gamePlan);
+  return {
+    formation:d.formation,gamePlan:d.gamePlan,pressure:d.pressure,mentality:d.mentality,tempo:d.tempo,
+    marking:'À zona',offside:'Não',tackling,
+    attackInstruction:normalizeAttackLineV60(lines.attack),
+    midfieldInstruction:normalizeMidLineV60(lines.mid),
+    defenceInstruction:normalizeDefLineV60(lines.def),
+    confidence:'média',
+    reason:`Fallback favorito: ${explainBaseV73(s,d)}. ${tacklingReasonV76(s,tackling)}.`,
+    generatedAt:nowIso(),engine:'Local v7.6.1',identityVerified:true
+  };
+}
+function fallbackTactic(s){return fallbackTacticV58(s)}
+
+function validateTacticV58(raw,s,source='Gemini'){
+  const audit=strengthAuditV75(s);
+  if(!audit.verified){
+    throw new Error('Não foi possível confirmar qual lado é leandrozzy. Reanalise o vídeo da partida antes de gerar a tática.');
+  }
+
+  const src=raw||{},diff=audit.diff,reg=tacticRegimeV73(s);
+  const under=['severe-underdog','underdog','slight-underdog'].includes(reg);
+  const base=under?underdogBaseV73(s):(reg==='balanced'?balancedBaseV73(s):dominantBaseV58(s));
+  const fallback=under?base:fallbackTacticV58(s);
+
+  let formation=FORMATIONS.includes(src.formation)?src.formation:fallback.formation;
+  let gamePlan=normalizeGamePlanV60(src.gamePlan)||normalizeGamePlanV60(fallback.gamePlan)||'Jogo de passes';
+
+  if(!hardFormationGateV73(formation,s)){
+    formation=base.formation;
+    gamePlan=base.gamePlan;
+  }
+
+  let pressure=clampInt(src.pressure),mentality=clampInt(src.mentality),tempo=clampInt(src.tempo);
+
+  if(under){
+    const p0=base.pressure,m0=base.mentality,t0=base.tempo;
+    pressure=pressure===null?p0:Math.max(p0-6,Math.min(p0+7,pressure));
+    mentality=mentality===null?m0:Math.max(m0-6,Math.min(m0+7,mentality));
+    tempo=tempo===null?t0:Math.max(t0-7,Math.min(t0+7,tempo));
+    if(diff<=-10){pressure=Math.min(58,pressure);mentality=Math.min(55,mentality)}
+    if(diff<=-20){pressure=Math.min(45,pressure);mentality=Math.min(40,mentality)}
+  }else if(reg==='dominant'){
+    const dom=dominantBaseV58(s),allowAlt=allowAlternativeFavoriteV75(s);
+    if(!allowAlt&&!/^4-3-3/.test(formation)){
+      formation=dom.formation;
+      gamePlan=normalizeGamePlanV60(dom.gamePlan)||'Jogar pelas alas';
+    }
+    if(!allowAlt){
+      if(pressure===null||pressure<68)pressure=dom.pressure;
+      if(mentality===null||mentality<72)mentality=dom.mentality;
+      if(tempo===null||tempo<68)tempo=dom.tempo;
+    }else{
+      if(pressure===null)pressure=68;
+      if(mentality===null)mentality=70;
+      if(tempo===null)tempo=68;
+      pressure=Math.max(60,Math.min(82,pressure));
+      mentality=Math.max(58,Math.min(84,mentality));
+      tempo=Math.max(60,Math.min(82,tempo));
+    }
+  }else{
+    if(pressure===null)pressure=fallback.pressure;
+    if(mentality===null)mentality=fallback.mentality;
+    if(tempo===null)tempo=fallback.tempo;
+  }
+
+  let attack=normalizeAttackLineV60(src.attackInstruction||base.attack||fallback.attackInstruction);
+  let mid=normalizeMidLineV60(src.midfieldInstruction||base.mid||fallback.midfieldInstruction);
+  let def=normalizeDefLineV60(src.defenceInstruction||base.def||fallback.defenceInstruction);
+
+  if(under){
+    if(diff<=-10){
+      if(def==='Defesas atacantes'||def==='Apoiar meio-campo')def='Defender atrás';
+      if(mid==='Pressionar na frente')mid=diff<=-15?'Ajudar a defesa':'Manter posições';
+    }
+    if(diff<=-20){
+      mid='Ajudar a defesa';
+      def='Defender atrás';
+    }
+  }
+
+  // Trava final do árbitro: nunca aceita da IA algo mais agressivo que a política local.
+  const tackling=normalizeTacklingV60(refereeTackling(s,s),'Normal');
+  const marking=under?'À zona':normalizeMarkingV60(src.marking);
+  const offside=under?'Não':(/sim/i.test(String(src.offside))?'Sim':'Não');
+
+  const out={
+    formation,gamePlan,pressure,mentality,tempo,marking,offside,tackling,
+    attackInstruction:attack,midfieldInstruction:mid,defenceInstruction:def,
+    confidence:src.confidence||'média',
+    generatedAt:nowIso(),engine:`${source} + motor v7.6.1`,identityVerified:true
+  };
+  out.reason=`${finalReasonV75(s,out,src.reason||'')} ${tacklingReasonV76(s,tackling)}.`;
+  return out;
+}
+
+function tacticPromptV58(s){
+  const diff=tacticStrengthDiffV58(s);
+  const reg=tacticRegimeV73(s);
+  const band=refereeBandV58(s);
+  const locked=refereeTackling(s,s);
+  const profile=opponentProfileV73(s);
+  const globalLearning=typeof learningForPromptV71==='function'?learningForPromptV71(s):{};
+  const discipline=disciplineLearningV76(s);
+  const base=['severe-underdog','underdog','slight-underdog'].includes(reg)
+    ? underdogBaseV73(s)
+    : (reg==='balanced'?balancedBaseV73(s):null);
+
+  return `Você é especialista em OSM 26. Gere UMA tática específica para ESTE confronto. Não use 4-3-3 por padrão.
+
+VOCABULÁRIO OBRIGATÓRIO:
+Estilo de jogo: Jogar pelas alas | Jogo de passes | Bola longa | Contra-ataque | Remate à vista.
+Desarme: Extremo | Agressivo | Normal | Cuidadoso.
+Avançados: Atacar apenas | Apoiar meio-campo | Ajudar a defender.
+Médios: Pressionar na frente | Manter posições | Ajudar a defesa.
+Defesas: Defesas atacantes | Apoiar meio-campo | Defender atrás.
+Marcação: À zona | Homem-a-homem.
+Fazer fora-de-jogo: Sim | Não.
+
+CONTEXTO:
+- diferença minha - rival: ${diff??'NI'};
+- regime: ${reg};
+- rival: ${profile.formation||'NI'} / ${s?.opponent?.style||'NI'};
+- local: ${s?.match?.venue||'NI'};
+- humano: ${s?.opponent?.human===true?'SIM':s?.opponent?.human===false?'NÃO':'NI'};
+- árbitro: ${refereeDescriptorV76(s)||'NI'} (${band});
+- tipo de entrada máximo permitido pelo motor: ${locked}.
+
+REGRAS DURAS:
+- se diferença <= -10: NÃO use 4-3-3, linha de 3 defensores ou 4-2-4;
+- se diferença <= -20: priorize 5-3-1-1, 5-3-2, 5-4-1 ou 6-3-1;
+- contra 4-3-3 rival quando somos inferiores: 4-5-1 Remate à vista é referência forte;
+- azarão: zona e sem fora-de-jogo por padrão;
+- vermelho/muito rigoroso: Cuidadoso obrigatório;
+- laranja/rigoroso: Cuidadoso ou Normal;
+- amarelo/médio: Normal por padrão;
+- azul/permissivo: pode Agressivo;
+- verde/muito permissivo: pode Agressivo e, em contexto extremo, Extremo;
+- NÃO escolha entrada mais agressiva que "${locked}";
+- empate/derrota anterior contra humano deve impedir repetição cega;
+- maximize a chance de vitória sem assumir risco disciplinar desnecessário.
+
+BASE SEGURA:
+${JSON.stringify(base)}
+
+DADOS DO SLOT:
+${JSON.stringify(tacticContext(s))}
+
+APRENDIZADO GLOBAL:
+${JSON.stringify(globalLearning)}
+
+APRENDIZADO DISCIPLINAR:
+${JSON.stringify(discipline)}
+
+RETORNE APENAS JSON:
+formation, gamePlan, pressure, mentality, tempo, marking, offside, tackling,
+attackInstruction, midfieldInstruction, defenceInstruction, confidence, reason.`;
+}
+
+function tacticModal(n){
+  const s=state.slots[n-1];
+  if(enforceCurrentTacklingV76(s))saveState();
+
+  const t=s.tactic;
+  if(!t){generateTacticForSlot(n);return}
+
+  const a=strengthAuditV75(s),changed=t.changedFromPrevious===true;
+  openModal(`<h2>Tática · Slot ${n}</h2>
+  <p class="muted small">${esc(s.teamName)} × ${esc(s.opponent.teamName)} · ${esc(t.engine||'IA')}</p>
+  <div class="identity-audit ${a.verified?'ok':'bad'}">
+    <b>${a.verified?'✓ leandrozzy confirmado':'⚠ identidade não confirmada'}</b>
+    <span>${a.mine!==null&&a.opp!==null?`Minha força ${a.mine} × rival ${a.opp} · diferença ${a.diff>=0?'+':''}${a.diff}`:'Forças não confiáveis'}</span>
+  </div>
+  ${t.previous?`<div class="recalc-status ${changed?'changed':'same'}"><b>${changed?'✓ Tática alterada':'↔ Tática mantida'}</b><span>${changed?'O recálculo mudou a configuração.':'O motor manteve a configuração.'}</span></div>`:''}
+  ${tacticVisualHtmlV60(t)}
+  <details class="tactic-exact"><summary>Ver tabela exata</summary><table class="tactic-table">${tacticRows(t).map(([k,v])=>`<tr><td>${esc(k)}</td><td><b>${esc(v)}</b></td></tr>`).join('')}</table></details>
+  <p class="small muted">${esc(t.reason||'')}</p>
+  <div class="actions">
+    <button class="btn" onclick="refreshTacticFromSavedDataV59(${n})">Recalcular com dados atuais</button>
+    <button class="btn secondary" onclick="openTacticVideoRefreshV59(${n})">Vídeo novo</button>
+  </div>`);
+}
