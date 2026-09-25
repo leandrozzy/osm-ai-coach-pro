@@ -1,6 +1,6 @@
 'use strict';
 
-const V2_VERSION = '2.0.3';
+const V2_VERSION = '2.0.4';
 const STATE_KEY = 'osm_ai_coach_pro_v2_state';
 const SETTINGS_KEY = 'osm_ai_coach_pro_v2_settings';
 const API_KEY_STORAGE = 'osm_ai_coach_pro_gemini_key';
@@ -375,12 +375,53 @@ function seekWithTimeout(video,t,timeoutMs=5000){
     try{video.currentTime=t}catch{finish(false)}
   });
 }
+
+async function geminiJson(parts,temperature=.1,maxOutputTokens=5000){
+  const key=localStorage.getItem(API_KEY_STORAGE);
+  if(!key) throw new Error('Configure a chave Gemini');
+  const model=settings.model||'gemini-2.5-flash';
+  const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
+  const body={
+    contents:[{role:'user',parts}],
+    generationConfig:{
+      temperature,
+      maxOutputTokens,
+      responseMimeType:'application/json'
+    }
+  };
+  let response;
+  try{
+    response=await fetch(url,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(body)
+    });
+  }catch(e){
+    throw new Error('Falha de conexão com Gemini: '+(e?.message||e));
+  }
+  const raw=await response.text();
+  if(!response.ok){
+    let msg=raw;
+    try{msg=JSON.parse(raw)?.error?.message||raw}catch{}
+    throw new Error(`Gemini ${response.status}: ${String(msg).slice(0,220)}`);
+  }
+  let data;
+  try{data=JSON.parse(raw)}catch{throw new Error('Resposta inválida da API Gemini')}
+  const out=(data.candidates||[]).flatMap(c=>c?.content?.parts||[]).map(p=>p?.text||'').join('').trim();
+  if(!out) throw new Error('Gemini não retornou conteúdo');
+  try{return JSON.parse(out)}
+  catch{
+    const cleaned=out.replace(/^```json\s*/i,'').replace(/```$/,'').trim();
+    try{return JSON.parse(cleaned)}catch{throw new Error('Gemini retornou JSON inválido')}
+  }
+}
+
 function analysisPrompt(){
   return `Você analisa telas do OSM 26 Android. O usuário da conta é "${settings.userNick||'leandrozzy'}". REGRA CRÍTICA: quando esse nick aparecer abaixo de um time, esse lado é SEMPRE "meu time"; nunca inverta forças. Não invente dados. Se não estiver visível, use null. Ausência visual de Campo de treinamento ou Treino secreto só pode virar false se a tela específica em que esse indicador apareceria estiver claramente presente; caso contrário null. Para árbitro, use Verde/Amarelo/Laranja/Vermelho somente quando visível. Retorne JSON estrito. Cada campo principal deve ser {"value":..., "confidence":0..1}. Também pode retornar sideA/sideB para a tela de comparação. Estrutura:
 {"teamName":{"value":null,"confidence":0},"opponentName":{"value":null,"confidence":0},"venue":{"value":null,"confidence":0},"referee":{"value":null,"confidence":0},"myOverall":{"value":null,"confidence":0},"oppOverall":{"value":null,"confidence":0},"myGoalkeeper":{"value":null,"confidence":0},"myDefence":{"value":null,"confidence":0},"myMidfield":{"value":null,"confidence":0},"myAttack":{"value":null,"confidence":0},"oppGoalkeeper":{"value":null,"confidence":0},"oppDefence":{"value":null,"confidence":0},"oppMidfield":{"value":null,"confidence":0},"oppAttack":{"value":null,"confidence":0},"mySquadValue":{"value":null,"confidence":0},"oppSquadValue":{"value":null,"confidence":0},"opponentManager":{"value":null,"confidence":0},"opponentHuman":{"value":null,"confidence":0},"opponentLoginBonus":{"value":null,"confidence":0},"opponentStadium":{"value":null,"confidence":0},"opponentTrainingCamp":{"value":null,"confidence":0},"opponentSecretTraining":{"value":null,"confidence":0},"opponentFormation":{"value":null,"confidence":0},"opponentStyle":{"value":null,"confidence":0},"opponentMarking":{"value":null,"confidence":0},"opponentOffside":{"value":null,"confidence":0},"competitionName":null,"competitionType":null,"round":null,"totalRounds":null,"sideA":null,"sideB":null}.`;
 }
 async function analyzeFiles(files){
-  const n=Number($('analysisSlot').value)||state.selectedSlot;job('Preparando mídia…');$('progressWrap').classList.remove('hidden');setProgress(10,'Preparando mídia…');
+  const n=Number($('analysisSlot').value)||state.selectedSlot;state.selectedSlot=n;job('Preparando mídia…');$('progressWrap').classList.remove('hidden');setProgress(10,'Preparando mídia…');
   try{
     const parts=[{text:analysisPrompt()}];let images=0;
     for(const f of files){
@@ -478,7 +519,8 @@ function renderMarket(){
   const s=selectedSlot();if(!s||s.status!=='active'){$('marketContent').innerHTML='<div class="card"><p class="muted">Configure o slot primeiro.</p></div>';return}
   const counts=countPositions(s.roster),health={};
   for(const [p,target] of Object.entries(POS_TARGET)){const n=counts[p]||0;health[p]={n,target,status:n===target?'good':n<target?'bad':'warn'}}
-  const plan=(s.marketPlan&&Array.isArray(s.marketPlan.actions))?s.marketPlan:buildMarketPlan(s);
+  // sempre recalcula para refletir a normalização atual das posições
+  const plan=buildMarketPlan(s);
   $('marketContent').innerHTML=`<div class="market-columns"><div class="card"><h3>Saúde do elenco</h3><div class="position-health">${Object.entries(health).map(([p,h])=>`<div class="health ${h.status}"><span>${p}</span><b>${h.n}/${h.target}</b></div>`).join('')}</div><p class="small muted">Regra configurada: 4 ATA · 6 MEI · 6 DEF · 2 GOL. Máximo de 4 jogadores simultaneamente à venda.</p></div>
   <div class="card"><h3>Plano ativo</h3>${plan.actions.length?`<div class="radar-list">${plan.actions.map(a=>`<div class="radar-item"><b>${esc(a)}</b></div>`).join('')}</div>`:'<p class="muted">Envie vídeo do elenco/mercado para gerar recomendações específicas.</p>'}<div class="actions"><button class="btn" onclick="showView('analyze');setAnalysisMode('market')">Ler mercado</button></div></div></div>
   <div class="card" style="margin-top:12px"><h3>Elenco reconhecido</h3>${s.roster.length?rosterTable(s.roster):'<p class="muted">Nenhum jogador reconhecido ainda.</p>'}</div>
@@ -514,12 +556,25 @@ function countPositions(rows){
 }
 function normalizePos(p){
   const s=String(p||'').trim().toUpperCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/[^A-Z0-9]/g,'');
   if(!s)return '';
-  if(s==='A'||s==='ATT'||s==='FW'||s==='FWD'||s==='ST'||s.includes('ATA')||s.includes('ATAC')||s.includes('FORWARD')||s.includes('STRIKER'))return'ATA';
-  if(s==='M'||s==='MF'||s==='MID'||s.includes('MEI')||s.includes('MIDFIELD')||s.includes('MEDIO')||s.includes('MEIA'))return'MEI';
-  if(s==='D'||s==='DF'||s==='DEF'||s==='CB'||s==='LB'||s==='RB'||s.includes('DEF')||s.includes('ZAG')||s.includes('LATERAL')||s.includes('BACK'))return'DEF';
-  if(s==='G'||s==='GK'||s==='GOL'||s.includes('GOLE')||s.includes('KEEPER')||s.includes('GUARDA-REDES'))return'GOL';
+
+  // Goleiros
+  if(['G','GK','GR','GOL','POR'].includes(s) || s.includes('GOLE') || s.includes('KEEPER')) return 'GOL';
+
+  // Defensores — abreviações comuns do OSM/PT
+  if(['D','DF','DEF','DC','ZAG','CB','DE','DD','LE','LD','LB','RB','DCE','DCD'].includes(s)
+     || s.includes('DEFENSOR') || s.includes('ZAGUEIRO') || s.includes('LATERAL') || s.includes('BACK')) return 'DEF';
+
+  // Meio-campistas
+  if(['M','MF','MID','MC','ME','MD','MDC','MCD','MCE','MOC','MO','VOL','CM','CDM','CAM','LM','RM'].includes(s)
+     || s.includes('MEIA') || s.includes('MEIO') || s.includes('MIDFIELD') || s.includes('MEDIO') || s.includes('VOLANTE')) return 'MEI';
+
+  // Atacantes / extremos
+  if(['A','ATT','FW','FWD','ST','ATA','CA','AC','PE','PD','EE','ED','EI','PL','CF','LW','RW'].includes(s)
+     || s.includes('ATAC') || s.includes('FORWARD') || s.includes('STRIKER') || s.includes('PONTA') || s.includes('EXTREMO')) return 'ATA';
+
   return s
 }
 function buildMarketPlan(s){
@@ -532,8 +587,9 @@ function buildMarketPlan(s){
   const selling=roster.filter(p=>p?.forSale===true).length;
   if(selling>4)actions.unshift(`Reduzir lista de vendas: ${selling} jogadores marcados; limite desejado é 4`);
   const classified=Object.values(counts).reduce((a,b)=>a+b,0);
+  const unknownPositions=[...new Set(roster.map(p=>String(playerPosValue(p)||'').trim()).filter(pos=>pos && !['ATA','MEI','DEF','GOL'].includes(normalizePos(pos))))];
   const unclassified=Math.max(0,roster.length-classified);
-  if(unclassified)actions.unshift(`${unclassified} jogador(es) sem posição reconhecida; revise o campo Pos. no elenco`);
+  if(unclassified)actions.unshift(`${unclassified} jogador(es) sem posição reconhecida${unknownPositions.length?`: ${unknownPositions.join(', ')}`:''}`);
   if(!actions.length)actions.push('Distribuição por posição está no alvo; priorize upgrade de força sem quebrar a estrutura');
   s.marketPlan={generatedAt:nowIso(),actions,counts,unclassified};return s.marketPlan;
 }
@@ -600,6 +656,7 @@ async function runPendingAnalysis(){
   if(!pendingMediaFiles.length){toast('Escolha uma mídia primeiro');return}
   if(!localStorage.getItem(API_KEY_STORAGE)){apiModal('Configure a API Gemini antes de analisar.');return}
   analysisBusy=true;
+  if($('analysisDiagnostics'))$('analysisDiagnostics').textContent='Análise iniciada…';
   $('analyzeNowBtn').disabled=true;
   $('analyzeNowBtn').textContent='Analisando…';
   try{
@@ -607,6 +664,7 @@ async function runPendingAnalysis(){
     else if(analysisMode==='tactic')await analyzeFiles(pendingMediaFiles);
     else toast('Este modo será ampliado; use o registro manual por enquanto.');
   }finally{
+    if($('analysisDiagnostics'))$('analysisDiagnostics').textContent='Análise finalizada.';
     analysisBusy=false;
     $('analyzeNowBtn').disabled=false;
     $('analyzeNowBtn').textContent='🔎 Analisar mídia novamente';
@@ -669,7 +727,7 @@ function importV1State(raw){
       if(hasValue(v)||typeof v==='boolean') s.fieldMeta[p]={source:'manual',confidence:.85,updatedAt:nowIso()};
     }
     calcQuality(s);
-    if(s.roster.length) s.marketPlan=buildMarketPlan(s);
+    s.marketPlan=buildMarketPlan(s);
     return s;
   });
   state.archives=Array.isArray(src.archives)?src.archives:[];

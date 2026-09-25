@@ -105,3 +105,22 @@ Para atualizar esta versão, substitua na v2-development:
 - index.html
 - app.js
 - styles.css
+
+
+CORREÇÃO v2.0.4
+---------------
+- Restaurada função geminiJson (erro "geminiJson is not defined").
+- Saúde do elenco agora reconhece posições OSM como:
+  EE/ED/EI/PE/PD/CA = ATA
+  MC/ME/MD/MDC/MOC = MEI
+  DC/DE/DD/LE/LD = DEF
+  GK/GR/GOL = GOL
+- Diretor IA recalcula sempre a saúde do elenco com o mapeamento atual.
+- Toast de mensagem saiu do rodapé e foi para o topo.
+- Adicionado espaço seguro inferior para Android.
+- Adicionado indicador textual do início/fim da análise.
+
+Substitua na branch v2-development:
+- index.html
+- app.js
+- styles.css
