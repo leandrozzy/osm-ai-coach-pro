@@ -1,10 +1,10 @@
 {
-  "name": "OSM AI Coach Pro",
-  "short_name": "OSM Coach Pro",
+  "name": "OSM AI Coach Pro V2",
+  "short_name": "OSM Coach V2",
   "start_url": "./",
   "display": "standalone",
-  "background_color": "#081221",
-  "theme_color": "#081221",
+  "background_color": "#06101b",
+  "theme_color": "#07111f",
   "icons": [
     {
       "src": "icon.svg",
