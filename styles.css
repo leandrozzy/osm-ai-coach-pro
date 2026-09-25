@@ -706,3 +706,11 @@ button:hover,.btn:hover,.primary:hover,.secondary:hover{box-shadow:0 10px 24px r
 .referee-safety-note{font-size:11px;color:#abc1d6}
 
 /* v7.6.1 hotfix stack */
+
+/* v7.7 auditoria do árbitro */
+.referee-audit{display:flex;flex-direction:column;gap:4px;margin:10px 0;padding:10px 12px;border-radius:13px;border:1px solid #31516f;background:#0b1d31}
+.referee-audit.ok{border-color:#2f8d72;background:#0d2927}
+.referee-audit.ok b{color:#82e8c2}
+.referee-audit.bad{border-color:#a84d5d;background:#321923}
+.referee-audit.bad b{color:#ff9baa}
+.referee-audit span{font-size:11px;color:#b7cadd}

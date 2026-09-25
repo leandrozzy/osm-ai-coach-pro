@@ -5018,3 +5018,251 @@ function tacticModal(n){
     <button class="btn secondary" onclick="openTacticVideoRefreshV59(${n})">Vídeo novo</button>
   </div>`);
 }
+
+
+// ===== v7.7: leitura visual dedicada do árbitro na 1ª tela =====
+function refereeColorCanonicalV77(v){
+  const x=normalize(String(v||''));
+  if(/vermel|red/.test(x))return 'Vermelho';
+  if(/laranj|orange/.test(x))return 'Laranja';
+  if(/amarel|yellow/.test(x))return 'Amarelo';
+  if(/azul|blue/.test(x))return 'Azul';
+  if(/verde|green/.test(x))return 'Verde';
+  return null;
+}
+
+function refereeStrictnessCanonicalV77(v,color){
+  const x=normalize(String(v||''));
+  if(/muito rigor|very strict|extrem/.test(x))return 'Muito rigoroso';
+  if(/rigor|strict/.test(x))return color==='Vermelho'?'Muito rigoroso':'Rigoroso';
+  if(/medio|médio|average|normal/.test(x))return 'Médio';
+  if(/permiss|lenient|soft/.test(x))return color==='Verde'?'Muito permissivo':'Permissivo';
+  if(color==='Vermelho')return 'Muito rigoroso';
+  if(color==='Laranja')return 'Rigoroso';
+  if(color==='Amarelo')return 'Médio';
+  if(color==='Azul')return 'Permissivo';
+  if(color==='Verde')return 'Muito permissivo';
+  return null;
+}
+
+async function extractRefereeVisualV77(matchFrame){
+  if(!matchFrame?.base64)return {color:null,strictness:null,visible:false,confidence:0};
+
+  const prompt=`Analise APENAS esta captura da TELA PRINCIPAL DA PARTIDA do OSM 26.
+
+Há um árbitro visível na região central/inferior da tela, acompanhado por um INDICADOR COLORIDO de rigor.
+Você deve ler visualmente esse indicador. NÃO dependa do OCR do texto "Árbitro".
+
+Classifique SOMENTE em uma destas 5 cores:
+- Verde
+- Azul
+- Amarelo
+- Laranja
+- Vermelho
+
+Correspondência de rigor:
+Verde = Muito permissivo
+Azul = Permissivo
+Amarelo = Médio
+Laranja = Rigoroso
+Vermelho = Muito rigoroso
+
+IMPORTANTE:
+- observe a COR do indicador/termômetro ao lado do árbitro;
+- não confunda cores dos escudos, camisas, botões ou gramado com a cor do árbitro;
+- se o indicador estiver realmente visível, visible=true;
+- se estiver parcialmente visível, escolha a cor mais provável e reduza confidence;
+- só use color=null se o árbitro/indicador não estiver na imagem.
+
+RETORNE APENAS JSON:
+{"visible":true,"color":"Vermelho","strictness":"Muito rigoroso","confidence":0.98}`;
+
+  try{
+    const r=await geminiJson([
+      {text:prompt},
+      {inlineData:{mimeType:matchFrame.mimeType,data:matchFrame.base64}}
+    ],{temperature:0,maxOutputTokens:500});
+
+    const color=refereeColorCanonicalV77(r?.color);
+    const strictness=refereeStrictnessCanonicalV77(r?.strictness,color);
+    return {
+      visible:r?.visible!==false && !!color,
+      color,
+      strictness,
+      confidence:Number(r?.confidence)||0
+    };
+  }catch(e){
+    console.warn('Falha na leitura dedicada do árbitro',e);
+    return {color:null,strictness:null,visible:false,confidence:0};
+  }
+}
+
+function injectRefereeV77(result,ref){
+  if(!result?.captures?.length||!ref?.color)return result;
+  for(const c of result.captures){
+    c.match=c.match||{};
+    c.match.refereeColor=ref.color;
+    c.match.refereeStrictness=ref.strictness;
+    c.match.refereeName=c.match.refereeName||'Árbitro';
+    c.match.refereeConfidence=ref.confidence;
+  }
+  return result;
+}
+
+// Definição final do analisador: primeiro lê visualmente o árbitro no quadro 1,
+// depois faz a análise geral e sobrescreve o campo com a leitura especializada.
+async function analyzeOcrPackage(ocr,evidence){
+  let dedicatedRef={color:null,strictness:null,visible:false,confidence:0};
+
+  if(analysisMode==='tactic' && evidence?.length){
+    // As 6 telas obrigatórias são passadas em ordem; a primeira é match_overview.
+    dedicatedRef=await extractRefereeVisualV77(evidence[0]);
+  }
+
+  const parts=[{text:`${hybridPrompt(ocr)}
+
+REGRA EXTRA SOBRE O ÁRBITRO:
+- A primeira imagem de apoio é a tela principal da partida.
+- Leia visualmente a cor do indicador do árbitro nessa tela.
+- refereeColor deve ser exatamente: Verde, Azul, Amarelo, Laranja ou Vermelho.
+- refereeStrictness deve ser: Muito permissivo, Permissivo, Médio, Rigoroso ou Muito rigoroso.
+- Não deixe refereeColor vazio se o indicador estiver visível.`}];
+
+  for(let i=0;i<(evidence||[]).length;i++){
+    const f=evidence[i];
+    parts.push(
+      {text:`Imagem de apoio ${i+1}${i===0&&analysisMode==='tactic'?' — TELA PRINCIPAL / ÁRBITRO':''}`},
+      {inlineData:{mimeType:f.mimeType,data:f.base64}}
+    );
+  }
+
+  let result=await geminiJson(parts,{temperature:.02,maxOutputTokens:8500});
+
+  // Identidade do usuário.
+  for(let c of result?.captures||[]){
+    c=enforceIdentityV74B(c);
+    if(c?.opponent){
+      const mgr=normalizeManagerV74B(c.opponent.manager||c.opponent.user);
+      c.opponent.human=!!mgr && mgr!==MY_MANAGER_NAME_V74B;
+    }
+  }
+
+  // A leitura visual dedicada tem prioridade sobre OCR/análise geral.
+  result=injectRefereeV77(result,dedicatedRef);
+  return result;
+}
+
+// O árbitro passa a ser obrigatório para concluir a geração de tática.
+const applyVisionResult_beforeV77 = applyVisionResult;
+function applyVisionResult(result){
+  applyVisionResult_beforeV77(result);
+
+  const mode=activeAnalysisJobV54?.mode||analysisMode;
+  if(mode!=='tactic')return;
+
+  for(const c of result?.captures||[]){
+    const n=resolveCaptureSlot(c);
+    if(!n)continue;
+    const s=state.slots[n-1];
+
+    const color=refereeColorCanonicalV77(c?.match?.refereeColor||s.match?.refereeColor);
+    if(color){
+      s.match.refereeColor=color;
+      s.match.refereeStrictness=refereeStrictnessCanonicalV77(c?.match?.refereeStrictness,color);
+      s.match.refereeConfidence=Number(c?.match?.refereeConfidence)||null;
+      s.missing=(s.missing||[]).filter(x=>normalize(x)!=='arbitro' && normalize(x)!=='árbitro');
+    }else{
+      if(!s.missing)s.missing=[];
+      if(!s.missing.some(x=>normalize(x).includes('arbitro')))s.missing.push('árbitro da tela principal');
+      // Sem árbitro não aceitamos uma tática como concluída.
+      s.tactic=null;
+      s.tacticNeedsRefresh=true;
+    }
+  }
+  saveState();
+}
+
+function refereeDescriptorV76(sOrText){
+  if(typeof sOrText==='string')return sOrText;
+  const s=sOrText||{},m=s.match||{};
+  return [
+    m.refereeColor,
+    m.refereeStrictness,
+    m.refereeName,
+    m.referee,
+    m.refereeLevel,
+    m.refereeText
+  ].filter(Boolean).join(' ');
+}
+
+// Antes de gerar/recalcular, exige árbitro conhecido.
+const generateTacticForSlot_beforeV77 = generateTacticForSlot;
+async function generateTacticForSlot(n,silent=false){
+  const s=state.slots[n-1];
+  const color=refereeColorCanonicalV77(s?.match?.refereeColor);
+  if(!color){
+    s.tactic=null;
+    s.tacticNeedsRefresh=true;
+    saveState();
+    if(!silent)toast('Árbitro não identificado. Reenvie somente a tela principal da partida.');
+    return;
+  }
+  s.match.refereeColor=color;
+  s.match.refereeStrictness=refereeStrictnessCanonicalV77(s.match.refereeStrictness,color);
+  return generateTacticForSlot_beforeV77(n,silent);
+}
+
+// Corrige táticas já salvas assim que o árbitro estiver disponível.
+function enforceCurrentTacklingV76(s){
+  if(!s?.tactic)return false;
+  const color=refereeColorCanonicalV77(s?.match?.refereeColor);
+  if(!color)return false;
+
+  s.match.refereeColor=color;
+  s.match.refereeStrictness=refereeStrictnessCanonicalV77(s.match.refereeStrictness,color);
+
+  const expected=normalizeTacklingV60(refereeTackling(s,s),'Normal');
+  if(s.tactic.tackling!==expected){
+    s.tactic.tackling=expected;
+    s.tactic.reason=`${s.tactic.reason||''} ${tacklingReasonV76(s,expected)}.`;
+    s.tactic.engine='motor v7.7';
+    s.updatedAt=nowIso();
+    return true;
+  }
+  return false;
+}
+
+function refereeAuditHtmlV77(s){
+  const color=refereeColorCanonicalV77(s?.match?.refereeColor);
+  if(!color)return `<div class="referee-audit bad"><b>⚠ Árbitro não identificado</b><span>A tática não deve ser finalizada sem ler a primeira tela.</span></div>`;
+  return `<div class="referee-audit ok"><b>🧑‍⚖️ ${esc(color)} · ${esc(s.match.refereeStrictness||'')}</b><span>Entrada aplicada: ${esc(s.tactic?.tackling||refereeTackling(s,s))}${s.match.refereeConfidence?` · confiança ${Math.round(s.match.refereeConfidence*100)}%`:''}</span></div>`;
+}
+
+const tacticModal_beforeV77 = tacticModal;
+function tacticModal(n){
+  const s=state.slots[n-1];
+  if(enforceCurrentTacklingV76(s))saveState();
+
+  const t=s.tactic;
+  if(!t){
+    toast('Tática ainda não concluída.');
+    return;
+  }
+
+  const a=strengthAuditV75(s),changed=t.changedFromPrevious===true;
+  openModal(`<h2>Tática · Slot ${n}</h2>
+  <p class="muted small">${esc(s.teamName)} × ${esc(s.opponent.teamName)} · ${esc(t.engine||'IA')}</p>
+  <div class="identity-audit ${a.verified?'ok':'bad'}">
+    <b>${a.verified?'✓ leandrozzy confirmado':'⚠ identidade não confirmada'}</b>
+    <span>${a.mine!==null&&a.opp!==null?`Minha força ${a.mine} × rival ${a.opp} · diferença ${a.diff>=0?'+':''}${a.diff}`:'Forças não confiáveis'}</span>
+  </div>
+  ${refereeAuditHtmlV77(s)}
+  ${t.previous?`<div class="recalc-status ${changed?'changed':'same'}"><b>${changed?'✓ Tática alterada':'↔ Tática mantida'}</b><span>${changed?'O recálculo mudou a configuração.':'O motor manteve a configuração.'}</span></div>`:''}
+  ${tacticVisualHtmlV60(t)}
+  <details class="tactic-exact"><summary>Ver tabela exata</summary><table class="tactic-table">${tacticRows(t).map(([k,v])=>`<tr><td>${esc(k)}</td><td><b>${esc(v)}</b></td></tr>`).join('')}</table></details>
+  <p class="small muted">${esc(t.reason||'')}</p>
+  <div class="actions">
+    <button class="btn" onclick="refreshTacticFromSavedDataV59(${n})">Recalcular com dados atuais</button>
+    <button class="btn secondary" onclick="openTacticVideoRefreshV59(${n})">Vídeo novo</button>
+  </div>`);
+}
