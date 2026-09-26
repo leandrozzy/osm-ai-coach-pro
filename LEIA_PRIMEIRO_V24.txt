@@ -80,3 +80,16 @@ SE O NAVEGADOR MOSTRAR A VERSÃO ANTIGA
 - Abra novamente a URL.
 - Se necessário, atualize a página uma vez.
 O index desta versão muda os parâmetros de versão para 2.4.0.
+
+
+CORREÇÃO 2.4.1 — CALENDÁRIO COMO FONTE DE VERDADE
+--------------------------------------------------
+- Corrigido caso em que a IA lia um nome inválido como "asd" no vídeo do resultado.
+- O nome lido no resultado NÃO pode mais trocar o adversário do slot.
+- Para fechar a partida, o app procura primeiro:
+  1. o adversário que já estava salvo no slot;
+  2. a rodada atual no calendário;
+  3. fallback somente se existir exatamente UMA partida pendente válida.
+- O próximo adversário vem EXCLUSIVAMENTE da próxima partida válida do calendário.
+- Se o app não conseguir identificar a partida atual com segurança, ele salva o resultado,
+  mas NÃO altera o adversário e mostra um aviso para evitar dados inventados.

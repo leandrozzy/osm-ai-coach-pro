@@ -5,7 +5,7 @@
    Não apaga localStorage nem altera o formato principal do backup.
 */
 (function(){
-  const PATCH_VERSION='2.4.0-main-fix';
+  const PATCH_VERSION='2.4.1-calendar-truth';
 
   function hEsc(v){
     return String(v ?? 'NI').replace(/[&<>"']/g,m=>({
@@ -99,29 +99,40 @@
     return next;
   }
 
-  function markCalendarResult(s,opponent,gf,ga,score){
+  function findCurrentCalendarMatch(s){
+    const rows=Array.isArray(s?.schedule)?s.schedule:[];
+    const currentOpp=norm(s?.opponent?.teamName);
+    const currentRound=Number(s?.round);
+
+    // 1) Fonte principal: adversário que já estava salvo no slot ANTES da leitura do resultado.
+    if(currentOpp){
+      const byOpponent=rows.findIndex(x=>!x.played && !x.skipped && !x.placeholder && norm(x.opponent)===currentOpp);
+      if(byOpponent>=0)return byOpponent;
+    }
+
+    // 2) Segunda fonte: rodada atual do slot.
+    if(Number.isFinite(currentRound)){
+      const byRound=rows.findIndex(x=>!x.played && !x.skipped && !x.placeholder && Number(x.round)===currentRound);
+      if(byRound>=0)return byRound;
+    }
+
+    // 3) Só aceita fallback se houver EXATAMENTE uma partida válida não jogada.
+    const pending=rows
+      .map((x,i)=>({x,i}))
+      .filter(({x})=>!x.played && !x.skipped && !x.placeholder && validOpponent(x.opponent));
+    return pending.length===1?pending[0].i:-1;
+  }
+
+  function markCalendarResult(s,gf,ga,score){
     const rows=Array.isArray(s?.schedule)?s.schedule:[];
     if(!rows.length)return null;
 
-    const currentRound=Number(s.round);
-    const oppNorm=norm(opponent);
-    let idx=-1;
-
-    if(oppNorm){
-      idx=rows.findIndex(x=>!x.played && norm(x.opponent)===oppNorm);
-    }
-    if(idx<0 && Number.isFinite(currentRound)){
-      idx=rows.findIndex(x=>!x.played && Number(x.round)===currentRound);
-    }
-    if(idx<0){
-      idx=rows.findIndex(x=>!x.played && !x.skipped && !x.placeholder);
-    }
+    const idx=findCurrentCalendarMatch(s);
     if(idx<0)return null;
 
     const out=resultOutcome(gf,ga);
     rows[idx]={
       ...rows[idx],
-      opponent:rows[idx].opponent||opponent||null,
       result:score||`${gf}-${ga}`,
       outcome:out,
       played:true,
@@ -176,8 +187,13 @@
     const gf=Number(r?.gf),ga=Number(r?.ga);
     if(!Number.isFinite(gf)||!Number.isFinite(ga))throw new Error('Não consegui identificar o placar final.');
 
-    const opponent=r?.opponent||s.opponent?.teamName||null;
+    // IMPORTANTE: o nome extraído do vídeo do resultado NÃO pode mudar o adversário.
+    // Primeiro identifica a partida atual no calendário/slot; o calendário é a fonte de verdade.
+    const currentCalendarIndex=findCurrentCalendarMatch(s);
+    const currentCalendarMatch=currentCalendarIndex>=0 ? s.schedule[currentCalendarIndex] : null;
+    const opponent=currentCalendarMatch?.opponent || s.opponent?.teamName || null;
     const score=r?.score||`${gf}-${ga}`;
+
     const entry={
       createdAt:new Date().toISOString(),
       opponent,
@@ -191,7 +207,7 @@
         oppFormation:r?.oppFormation||s.opponent?.formation||null,
         myFormation:r?.myFormation||s.tactic?.formation||null,
         oppStyle:s.opponent?.style||null,
-        venue:s.match?.venue||null,
+        venue:currentCalendarMatch?.venue||s.match?.venue||null,
         referee:s.match?.refereeColor||null,
         strengthBucket:typeof strengthBucket==='function'?strengthBucket(s):null
       }
@@ -199,12 +215,18 @@
     s.results=Array.isArray(s.results)?s.results:[];
     s.results.push(entry);
 
-    const marked=markCalendarResult(s,opponent,gf,ga,score);
+    const marked=markCalendarResult(s,gf,ga,score);
     const lesson=buildLearning(s,entry);
     s.tactic=null;
 
-    if(!marked && Number.isFinite(Number(s.round))) s.round=Number(s.round)+1;
-    const next=promoteNextMatch(s);
+    // Se o calendário não conseguiu identificar a partida atual com segurança,
+    // não "adivinha" a próxima nem avança adversário.
+    let next=null;
+    if(marked){
+      next=promoteNextMatch(s);
+    }else{
+      s.lastCalendarSyncWarning='Resultado salvo, mas a partida atual não foi localizada com segurança no calendário. O adversário não foi alterado.';
+    }
 
     s.lastAnalysisAt=new Date().toISOString();
     return {entry,lesson,next,marked};
@@ -245,6 +267,9 @@
     const s=selectedSlot();
     const done=finishResultForSlot(s,r);
     setTimeout(()=>renderPostMatchLearning(s,done.lesson,done.next),0);
+    if(!done.marked){
+      setTimeout(()=>job('Resultado salvo, mas o calendário não confirmou qual partida encerrar. O adversário foi mantido para evitar erro.','error'),0);
+    }
   };
 
   // ===== RESULTADO MANUAL =====
