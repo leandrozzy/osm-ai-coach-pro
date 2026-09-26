@@ -12,7 +12,7 @@
   Não carrega os hotfixes 2.4.x anteriores.
 */
 (function(){
-  const CLEAN_VERSION='2.5.5';
+  const CLEAN_VERSION='2.5.6';
 
   function e(v){
     return String(v ?? 'NI').replace(/[&<>"']/g,m=>({
@@ -183,31 +183,94 @@
 
   function learnFromResult(s,entry){
     const rows=Array.isArray(s.results)?s.results:[];
-    const form=entry?.tactic?.formation||entry?.context?.myFormation||'NI';
-    const same=rows.filter(r=>(r?.tactic?.formation||r?.context?.myFormation||'NI')===form);
-    const w=same.filter(r=>Number(r.gf)>Number(r.ga)).length;
-    const d=same.filter(r=>Number(r.gf)===Number(r.ga)).length;
-    const l=same.filter(r=>Number(r.gf)<Number(r.ga)).length;
+    const stats=entry?.stats||{};
+    const ctx=entry?.context||{};
+    const t=entry?.tactic||{};
+    const resultCode=outcome(entry.gf,entry.ga);
+    const form=t?.formation||ctx?.myFormation||'NI';
+    const oppForm=ctx?.oppFormation||'NI';
+    const strength=ctx?.strengthBucket||'NI';
+
+    const sameForm=rows.filter(r=>(r?.tactic?.formation||r?.context?.myFormation||'NI')===form);
+    const formW=sameForm.filter(r=>Number(r.gf)>Number(r.ga)).length;
+    const formD=sameForm.filter(r=>Number(r.gf)===Number(r.ga)).length;
+    const formL=sameForm.filter(r=>Number(r.gf)<Number(r.ga)).length;
+
+    const sameOppForm=rows.filter(r=>(r?.context?.oppFormation||'NI')===oppForm);
+    const oppW=sameOppForm.filter(r=>Number(r.gf)>Number(r.ga)).length;
+    const oppD=sameOppForm.filter(r=>Number(r.gf)===Number(r.ga)).length;
+    const oppL=sameOppForm.filter(r=>Number(r.gf)<Number(r.ga)).length;
+
+    const facts=[];
+    facts.push(`Resultado: ${entry.score} (${outcomeText(resultCode)}).`);
+    if(form!=='NI')facts.push(`Minha formação: ${form}.`);
+    if(oppForm!=='NI')facts.push(`Formação rival: ${oppForm}.`);
+    if(filled(ctx.venue))facts.push(`Local: ${ctx.venue}.`);
+    if(filled(ctx.referee))facts.push(`Árbitro: ${ctx.referee}.`);
+    if(filled(ctx.myOverall)||filled(ctx.oppOverall))facts.push(`Forças registradas: ${filled(ctx.myOverall)?ctx.myOverall:'NI'} × ${filled(ctx.oppOverall)?ctx.oppOverall:'NI'}.`);
+
+    const statFacts=[];
+    const pushStat=(label,a,b)=>{
+      if(filled(a)||filled(b))statFacts.push(`${label}: ${filled(a)?a:'NI'} × ${filled(b)?b:'NI'}.`);
+    };
+    pushStat('Remates',stats.myShots,stats.oppShots);
+    pushStat('Posse',stats.myPossession,stats.oppPossession);
+    pushStat('Cantos',stats.myCorners,stats.oppCorners);
+    pushStat('Faltas',stats.myFouls,stats.oppFouls);
+    pushStat('Amarelos',stats.myYellowCards,stats.oppYellowCards);
+    pushStat('Vermelhos',stats.myRedCards,stats.oppRedCards);
+
+    const patterns=[];
+    if(form!=='NI')patterns.push(`${form}: ${sameForm.length} jogo(s) neste slot — ${formW}V/${formD}E/${formL}D.`);
+    if(oppForm!=='NI')patterns.push(`Contra ${oppForm}: ${sameOppForm.length} jogo(s) — ${oppW}V/${oppD}E/${oppL}D.`);
+
+    if(filled(stats.myShots)&&filled(stats.oppShots)){
+      const ms=Number(stats.myShots),os=Number(stats.oppShots);
+      if(Number.isFinite(ms)&&Number.isFinite(os)){
+        if(resultCode==='D' && ms>os)patterns.push('Criou mais remates que o rival, mas perdeu: eficiência/conversão deve ganhar peso na próxima análise semelhante.');
+        if(resultCode==='V' && ms<os)patterns.push('Venceu mesmo com menos remates: resultado foi eficiente, mas não deve ser tratado sozinho como superioridade tática.');
+      }
+    }
+    if(filled(stats.myPossession)&&filled(stats.oppPossession)){
+      const mp=parseFloat(String(stats.myPossession).replace(',','.'));
+      const op=parseFloat(String(stats.oppPossession).replace(',','.'));
+      if(Number.isFinite(mp)&&Number.isFinite(op)){
+        if(resultCode==='D' && mp>op)patterns.push('Mais posse não se converteu em resultado; posse isolada não será tratada como sinal de sucesso.');
+        if(resultCode==='V' && mp<op)patterns.push('Vitória com menos posse; contra contexto semelhante, controle de posse não precisa ser prioridade absoluta.');
+      }
+    }
+
+    const events=Array.isArray(entry?.events)?entry.events:[];
+    const eventNotes=events.slice(0,12).map(x=>typeof x==='string'?x:JSON.stringify(x));
 
     const lesson={
       at:new Date().toISOString(),
       opponent:entry.opponent||null,
       score:entry.score,
-      outcome:outcome(entry.gf,entry.ga),
+      outcome:resultCode,
       formation:form,
+      opponentFormation:oppForm,
+      strengthBucket:strength,
+      tactic:cloneSafe(t),
+      context:cloneSafe(ctx),
+      stats:cloneSafe(stats),
+      events:cloneSafe(events),
+      facts,
+      statFacts,
+      patterns,
       notes:[
-        form!=='NI'?`${form}: ${same.length} jogo(s) neste slot — ${w}V/${d}E/${l}D.`:'Formação usada não identificada.',
-        entry.gf>entry.ga
-          ? 'Resultado positivo registrado; será usado somente quando o contexto futuro for semelhante.'
-          : entry.gf===entry.ga
-            ? 'Empate registrado; a configuração não será tratada como solução ideal.'
-            : 'Resultado negativo registrado; esta combinação perde peso em contexto semelhante.'
-      ]
+        ...facts,
+        ...statFacts,
+        ...patterns,
+        ...(eventNotes.length?['Eventos relevantes: '+eventNotes.join(' | ')]:[])
+      ],
+      sampleSize:rows.length
     };
+
     s.lastLearning=lesson;
     s.learningLog=Array.isArray(s.learningLog)?s.learningLog:[];
     s.learningLog.unshift(lesson);
-    s.learningLog=s.learningLog.slice(0,30);
+    s.learningLog=s.learningLog.slice(0,40);
     return lesson;
   }
 
@@ -659,21 +722,45 @@ REGRA CRÍTICA DE RESULTADO:
 
     const target=document.getElementById('learningContent');
     if(!target)return;
+
+    const latest=last?`
+      <div class="card learning-detail-card" style="margin-top:12px">
+        <div class="learning-detail-head">
+          <div>
+            <span class="eyebrow">ÚLTIMO JOGO APRENDIDO</span>
+            <h3>${e(outcomeText(last.outcome))} · ${e(last.score)} contra ${e(last.opponent||'Adversário')}</h3>
+          </div>
+          <span class="result-badge ${last.outcome==='V'?'win':last.outcome==='E'?'draw':'loss'}">${e(last.outcome)}</span>
+        </div>
+
+        <div class="learning-section">
+          <b>Contexto usado pela IA</b>
+          ${(last.facts||[]).map(x=>`<div class="learning-row">${e(x)}</div>`).join('')||'<div class="learning-row muted">Sem contexto adicional.</div>'}
+        </div>
+
+        <div class="learning-section">
+          <b>Estatísticas consideradas</b>
+          ${(last.statFacts||[]).map(x=>`<div class="learning-row">${e(x)}</div>`).join('')||'<div class="learning-row muted">O vídeo não forneceu estatísticas suficientes.</div>'}
+        </div>
+
+        <div class="learning-section">
+          <b>Padrões que passam a influenciar próximas táticas</b>
+          ${(last.patterns||[]).map(x=>`<div class="learning-row learning-pattern">${e(x)}</div>`).join('')||'<div class="learning-row muted">Ainda não há amostra suficiente para formar padrão.</div>'}
+        </div>
+      </div>`:'';
+
     target.innerHTML=`
       <div class="card">
         <div class="section-head compact-head"><div><span class="eyebrow">SLOT ${e(s.slotNumber)}</span><h3>${e(s.teamName||'Sem time')}</h3></div></div>
         <div class="kpis">
-          <div class="kpi"><span>Jogos</span><b>${rows.length}</b></div>
+          <div class="kpi"><span>Jogos aprendidos</span><b>${rows.length}</b></div>
           <div class="kpi"><span>Vitórias</span><b>${w}</b></div>
           <div class="kpi"><span>Empates</span><b>${d}</b></div>
           <div class="kpi"><span>Derrotas</span><b>${l}</b></div>
         </div>
+        <p class="small muted">Este histórico é enviado como contexto nas próximas análises de tática deste slot.</p>
       </div>
-      ${last?`<div class="card" style="margin-top:12px">
-        <span class="eyebrow">ÚLTIMO APRENDIZADO</span>
-        <h3>${e(outcomeText(last.outcome))} · ${e(last.score)}</h3>
-        ${(last.notes||[]).map(x=>`<p class="small">${e(x)}</p>`).join('')}
-      </div>`:''}
+      ${latest}
       ${Object.keys(byForm).length?`<div class="card" style="margin-top:12px">
         <h3>Histórico por formação</h3>
         <table class="simple-table">
@@ -734,9 +821,11 @@ REGRA CRÍTICA DE RESULTADO:
     const done=finishResult(s,{gf,ga,score:`${gf}-${ga}`});
     if(done.entry)done.entry.note=note;
     saveState();
+    clearGeminiJobBanner();
     closeModal();
+    showView('learning');
     renderLearning();
-    toast(`Resultado ${gf}-${ga} registrado no Slot ${slotNo}`);
+    toast(`Resultado ${gf}-${ga} registrado e aprendizado atualizado no Slot ${slotNo}`);
   };
 
   // ------------------------------------------------------------
@@ -1183,12 +1272,15 @@ VALIDAÇÃO FORTE DE DATAS:
 
       localStorage.setItem(STATE_KEY,JSON.stringify(state));
       resultMediaAnalysisBusy=false;
+      clearGeminiJobBanner();
       closeModal();
       renderAll();
       showView('learning');
-      toast(`Resultado ${gf}-${ga} registrado no Slot ${slotNo}`);
+      renderLearning();
+      toast(`Resultado ${gf}-${ga} registrado e aprendizado atualizado no Slot ${slotNo}`);
     }catch(err){
       resultMediaAnalysisBusy=false;
+      clearGeminiJobBanner();
       if(prog)prog.textContent=`Falha: ${err?.message||String(err)}`;
       toast(err?.message||'Falha ao analisar resultado');
       if(btn){btn.disabled=false;btn.textContent='Tentar analisar novamente'}
@@ -1300,6 +1392,54 @@ VALIDAÇÃO FORTE DE DATAS:
     }
   };
   window.runPendingAnalysis=runPendingAnalysis;
+
+
+  // ------------------------------------------------------------
+  // 2.5.6 — APRENDIZADO É ENVIADO PARA AS PRÓXIMAS TÁTICAS
+  // ------------------------------------------------------------
+  const _prompt256=v21Prompt;
+  v21Prompt=function(ocr,mode){
+    let p=_prompt256(ocr,mode);
+    if(mode==='tactic'){
+      const s=selectedSlot();
+      const learn=(Array.isArray(s?.learningLog)?s.learningLog:[]).slice(0,12).map((x,i)=>({
+        jogo:i+1,
+        opponent:x.opponent,
+        score:x.score,
+        outcome:x.outcome,
+        formation:x.formation,
+        opponentFormation:x.opponentFormation,
+        strengthBucket:x.strengthBucket,
+        context:x.context,
+        stats:x.stats,
+        patterns:x.patterns
+      }));
+      p+=`
+
+APRENDIZADO REAL DESTE SLOT:
+${JSON.stringify(learn,null,2)}
+
+REGRAS PARA USAR O APRENDIZADO:
+- Use apenas como evidência histórica, nunca como verdade absoluta.
+- Dê mais peso a partidas com contexto semelhante: diferença de força, formação rival, local, árbitro e estilo rival.
+- Considere resultado E estatísticas. Não trate vitória isolada como prova de que a tática é sempre boa.
+- Se uma combinação perdeu repetidamente em contexto semelhante, reduza o peso dela.
+- Se venceu repetidamente em contexto semelhante e as estatísticas também foram favoráveis, aumente o peso dela.
+- Nunca invente dado ausente.`;
+    }
+    return p;
+  };
+
+  // Fecha qualquer banner "Consultando Gemini..." ao terminar fluxo de resultado.
+  function clearGeminiJobBanner(){
+    const b=document.getElementById('jobBanner');
+    if(!b)return;
+    if(/consultando gemini/i.test(String(b.textContent||''))){
+      b.classList.add('hidden');
+      b.textContent='';
+      b.className='job-banner hidden';
+    }
+  }
 
   // ------------------------------------------------------------
   // INICIALIZAÇÃO — NÃO altera adversário/rodada/calendário
