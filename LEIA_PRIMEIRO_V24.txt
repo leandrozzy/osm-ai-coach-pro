@@ -93,3 +93,19 @@ CORREÇÃO 2.4.1 — CALENDÁRIO COMO FONTE DE VERDADE
 - O próximo adversário vem EXCLUSIVAMENTE da próxima partida válida do calendário.
 - Se o app não conseguir identificar a partida atual com segurança, ele salva o resultado,
   mas NÃO altera o adversário e mostra um aviso para evitar dados inventados.
+
+
+CORREÇÃO 2.4.2 — PRÓXIMO JOGO E PARTIDAS CONDICIONAIS
+-------------------------------------------------------
+- Linha com status "Condicional" NUNCA pode virar o próximo adversário.
+- "ASD" do calendário condicional é ignorado para a tela Hoje.
+- Próximo jogo vem apenas de partida:
+  played=false
+  skipped=false
+  placeholder=false
+  conditional=false
+  adversário válido
+- Datas antigas pendentes são ignoradas.
+- Ao abrir a nova versão, os slots são reparados automaticamente com base no calendário já salvo.
+  Portanto, o Slot 2 deve sair de ASD e passar para Botev Plovdiv sem registrar o resultado novamente.
+- Corrigido também o cálculo de diferença de força: rival NI agora mostra NI, não +84.

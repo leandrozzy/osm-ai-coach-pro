@@ -5,7 +5,7 @@
    Não apaga localStorage nem altera o formato principal do backup.
 */
 (function(){
-  const PATCH_VERSION='2.4.1-calendar-truth';
+  const PATCH_VERSION='2.4.2-calendar-strict';
 
   function hEsc(v){
     return String(v ?? 'NI').replace(/[&<>"']/g,m=>({
@@ -68,18 +68,48 @@
     }
   }
 
+  function parseCalendarDate(x){
+    if(x?.dateTime){
+      const t=new Date(x.dateTime).getTime();
+      if(Number.isFinite(t))return t;
+    }
+    const raw=String(x?.dateText||'').trim();
+    // dd-mm-yy / dd/mm/yy / dd-mm-yyyy
+    const m=raw.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/);
+    if(m){
+      let y=Number(m[3]);
+      if(y<100)y+=2000;
+      const d=new Date(y,Number(m[2])-1,Number(m[1]),12,0,0,0);
+      const t=d.getTime();
+      if(Number.isFinite(t))return t;
+    }
+    return null;
+  }
+
   function pickNextMatch(s){
     const rows=Array.isArray(s?.schedule)?s.schedule:[];
+    const now=Date.now();
+    const todayStart=new Date();
+    todayStart.setHours(0,0,0,0);
+
     const candidates=rows
-      .filter(x=>!x.played && !x.skipped && !x.placeholder && validOpponent(x.opponent))
-      .slice()
+      .filter(x=>
+        !x.played &&
+        !x.skipped &&
+        !x.placeholder &&
+        !x.conditional &&              // REGRA: condicional nunca é próximo adversário real
+        validOpponent(x.opponent)
+      )
+      .map(x=>({...x,_ts:parseCalendarDate(x)}))
+      .filter(x=>x._ts===null || x._ts>=todayStart.getTime()) // ignora datas antigas não jogadas
       .sort((a,b)=>{
-        const ad=a.dateTime?new Date(a.dateTime).getTime():Number.MAX_SAFE_INTEGER;
-        const bd=b.dateTime?new Date(b.dateTime).getTime():Number.MAX_SAFE_INTEGER;
+        const ad=a._ts ?? Number.MAX_SAFE_INTEGER;
+        const bd=b._ts ?? Number.MAX_SAFE_INTEGER;
         if(ad!==bd)return ad-bd;
         const ar=Number(a.round),br=Number(b.round);
         return (Number.isFinite(ar)?ar:9999)-(Number.isFinite(br)?br:9999);
       });
+
     return candidates[0]||null;
   }
 
@@ -106,20 +136,20 @@
 
     // 1) Fonte principal: adversário que já estava salvo no slot ANTES da leitura do resultado.
     if(currentOpp){
-      const byOpponent=rows.findIndex(x=>!x.played && !x.skipped && !x.placeholder && norm(x.opponent)===currentOpp);
+      const byOpponent=rows.findIndex(x=>!x.played && !x.skipped && !x.placeholder && !x.conditional && norm(x.opponent)===currentOpp);
       if(byOpponent>=0)return byOpponent;
     }
 
     // 2) Segunda fonte: rodada atual do slot.
     if(Number.isFinite(currentRound)){
-      const byRound=rows.findIndex(x=>!x.played && !x.skipped && !x.placeholder && Number(x.round)===currentRound);
+      const byRound=rows.findIndex(x=>!x.played && !x.skipped && !x.placeholder && !x.conditional && Number(x.round)===currentRound);
       if(byRound>=0)return byRound;
     }
 
     // 3) Só aceita fallback se houver EXATAMENTE uma partida válida não jogada.
     const pending=rows
       .map((x,i)=>({x,i}))
-      .filter(({x})=>!x.played && !x.skipped && !x.placeholder && validOpponent(x.opponent));
+      .filter(({x})=>!x.played && !x.skipped && !x.placeholder && !x.conditional && validOpponent(x.opponent));
     return pending.length===1?pending[0].i:-1;
   }
 
@@ -428,8 +458,51 @@
   };
   window.v21Analyze=v21Analyze;
 
+
+  // ===== FORÇA: NI não pode virar zero =====
+  strengthDiff=function(s){
+    const av=s?.myTeam?.overall,bv=s?.opponent?.overall;
+    if(!has(av)||!has(bv))return null;
+    const a=Number(av),b=Number(bv);
+    return Number.isFinite(a)&&Number.isFinite(b)?a-b:null;
+  };
+  strengthBucket=function(s){
+    const d=strengthDiff(s);
+    if(d===null)return 'NI';
+    if(d>=20)return 'muito_mais_forte';
+    if(d>=8)return 'mais_forte';
+    if(d>-8)return 'equilibrado';
+    if(d>-20)return 'mais_fraco';
+    return 'muito_mais_fraco';
+  };
+
+  function repairSlotFromCalendar(s){
+    if(!s || s.status!=='active' || !Array.isArray(s.schedule) || !s.schedule.length)return;
+    const next=pickNextMatch(s);
+    if(!next)return;
+
+    const current=norm(s?.opponent?.teamName);
+    const nextNorm=norm(next.opponent);
+
+    // Corrige estado antigo contaminado por linha condicional/IA (ex.: "ASD").
+    if(current!==nextNorm || s.match?.nextMatchAt!==next.dateTime || s.match?.venue!==next.venue){
+      clearOpponentScoutingForNextMatch(s,next.opponent);
+      s.opponent.teamName=next.opponent;
+      s.match=s.match||{};
+      s.match.venue=next.venue||null;
+      s.match.nextMatchAt=next.dateTime||null;
+      if(Number.isFinite(Number(next.round)))s.round=Number(next.round);
+    }
+  }
+
+  function repairAllSlotsFromCalendar(){
+    for(const s of (state?.slots||[]))repairSlotFromCalendar(s);
+    try{localStorage.setItem(STATE_KEY,JSON.stringify(state));}catch{}
+  }
+
   // ===== HOJE: sempre obedece ao slot selecionado =====
   nextAction=function(){
+    repairSlotFromCalendar(selectedSlot());
     const s=selectedSlot();
     if(!s||s.status!=='active'){
       return {
@@ -592,6 +665,7 @@
   // Re-render após carregar a camada.
   try{
     localStorage.setItem('osm_ai_coach_patch_version',PATCH_VERSION);
+    repairAllSlotsFromCalendar();
     renderAll();
     renderAnalysisStatus();
   }catch(e){
