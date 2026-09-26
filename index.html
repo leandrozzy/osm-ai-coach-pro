@@ -7,7 +7,8 @@
   <meta name="description" content="OSM AI Coach Pro V2 — central inteligente para 4 slots, análise, tática, mercado e aprendizado.">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="styles.css?v=2.3.1-hotfix1">
+  <link rel="stylesheet" href="styles.css?v=2.4.0">
+  <link rel="stylesheet" href="hotfix-v24.css?v=2.4.0">
   <title>OSM AI Coach Pro V2</title>
 </head>
 <body>
@@ -20,7 +21,7 @@
       </div>
     </div>
     <div class="top-actions">
-      <span class="env-pill">V2 TESTE</span>
+      <span class="env-pill">MAIN 2.4</span>
       <button id="apiBtn" class="btn ghost">API Gemini</button>
     </div>
   </header>
@@ -104,7 +105,6 @@
       <div id="analysisContent"></div>
     </section>
 
-
     <section id="view-info" class="view">
       <div class="section-head">
         <div><span class="eyebrow">INFORMAÇÕES DO SLOT</span><h2>Liga, time e calendário</h2></div>
@@ -144,7 +144,8 @@
           </select>
         </label>
         <label>Alerta antes da partida (min)<input id="notifyMinutes" type="number" min="1" max="180" value="20"></label>
-        <label class="check"><input id="notifyEnabled" type="checkbox" checked><span>Notificações enquanto o app estiver aberto/instalado</span></label><div class="small muted">Leitura: motor da V1 + OCR local + Gemini 3.5 Flash como primeira tentativa.</div>
+        <label class="check"><input id="notifyEnabled" type="checkbox" checked><span>Notificações enquanto o app estiver aberto/instalado</span></label>
+        <div class="small muted">Leitura: motor atual + OCR local + validações adicionais da versão 2.4.</div>
         <div class="actions">
           <button id="saveSettingsBtn" class="btn">Salvar</button>
           <button id="notifyBtn" class="btn ghost">Permitir notificações</button>
@@ -153,7 +154,7 @@
 
       <div class="card">
         <h3>Backup e migração</h3>
-        <p class="muted">A V2 tenta importar automaticamente o estado local da versão anterior sem apagar o original.</p>
+        <p class="muted">A atualização 2.4 preserva o armazenamento atual. Ainda assim, exporte um backup antes de substituir os arquivos.</p>
         <div class="actions">
           <button id="migrateBtn" class="btn ghost">Importar backup da V1</button><input id="v1ImportInput" type="file" accept="application/json" hidden>
           <button id="exportBtn" class="btn ghost">Exportar backup V2</button>
@@ -171,7 +172,6 @@
   </div>
   <div id="toast" class="toast"></div>
 
-  
   <script>
   (async function(){
     try {
@@ -196,6 +196,7 @@
   </script>
 
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script src="app.js?v=2.3.1-hotfix1"></script>
+  <script src="app.js?v=2.4.0"></script>
+  <script src="hotfix-v24.js?v=2.4.0"></script>
 </body>
 </html>
