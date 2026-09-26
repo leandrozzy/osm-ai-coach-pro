@@ -5,7 +5,7 @@
    Não apaga localStorage nem altera o formato principal do backup.
 */
 (function(){
-  const PATCH_VERSION='2.4.2-calendar-strict';
+  const PATCH_VERSION='2.4.3-safe-calendar';
 
   function hEsc(v){
     return String(v ?? 'NI').replace(/[&<>"']/g,m=>({
@@ -86,47 +86,79 @@
     return null;
   }
 
-  function pickNextMatch(s){
-    const rows=Array.isArray(s?.schedule)?s.schedule:[];
-    const now=Date.now();
-    const todayStart=new Date();
-    todayStart.setHours(0,0,0,0);
-
-    const candidates=rows
-      .filter(x=>
-        !x.played &&
-        !x.skipped &&
-        !x.placeholder &&
-        !x.conditional &&              // REGRA: condicional nunca é próximo adversário real
-        validOpponent(x.opponent)
-      )
-      .map(x=>({...x,_ts:parseCalendarDate(x)}))
-      .filter(x=>x._ts===null || x._ts>=todayStart.getTime()) // ignora datas antigas não jogadas
-      .sort((a,b)=>{
-        const ad=a._ts ?? Number.MAX_SAFE_INTEGER;
-        const bd=b._ts ?? Number.MAX_SAFE_INTEGER;
-        if(ad!==bd)return ad-bd;
-        const ar=Number(a.round),br=Number(b.round);
-        return (Number.isFinite(ar)?ar:9999)-(Number.isFinite(br)?br:9999);
-      });
-
-    return candidates[0]||null;
+  function isPlaceholderOpponent(name){
+    const n=norm(name);
+    return !n || ['ni','tbd','a definir','aguardando','?','-','asd'].includes(n);
   }
 
-  function promoteNextMatch(s){
-    const next=pickNextMatch(s);
-    if(!next){
-      s.match=s.match||{};
-      s.match.nextMatchAt=null;
-      return null;
+  function nextScheduleEventAfter(s,playedIndex){
+    const rows=Array.isArray(s?.schedule)?s.schedule:[];
+    if(!rows.length)return null;
+
+    // A ordem original do calendário é preservada. Não reordena todos os jogos ao abrir o app.
+    // Primeiro tenta continuar a partir da partida que acabou.
+    if(Number.isInteger(playedIndex) && playedIndex>=0){
+      for(let i=playedIndex+1;i<rows.length;i++){
+        const x=rows[i];
+        if(!x || x.played || x.skipped || x.placeholder)continue;
+        return {row:x,index:i};
+      }
     }
-    clearOpponentScoutingForNextMatch(s,next.opponent);
-    s.opponent.teamName=next.opponent;
+
+    // Se não houver índice confiável, usa a primeira partida futura NÃO jogada,
+    // mas esta função só é chamada em ações explícitas (resultado/leitura), nunca no startup.
+    for(let i=0;i<rows.length;i++){
+      const x=rows[i];
+      if(!x || x.played || x.skipped || x.placeholder)continue;
+      return {row:x,index:i};
+    }
+    return null;
+  }
+
+  function pickNextMatch(s){
+    const ev=nextScheduleEventAfter(s,-1);
+    return ev?.row||null;
+  }
+
+  function promoteNextMatch(s,playedIndex=-1){
+    const ev=nextScheduleEventAfter(s,playedIndex);
+    const next=ev?.row||null;
+    if(!next)return null;
+
     s.match=s.match||{};
-    s.match.venue=next.venue||null;
-    s.match.nextMatchAt=next.dateTime||null;
-    if(Number.isFinite(Number(next.round))) s.round=Number(next.round);
-    return next;
+    s.match.nextMatchAt=next.dateTime||s.match.nextMatchAt||null;
+    s.match.venue=next.venue||s.match.venue||null;
+    if(Number.isFinite(Number(next.round)))s.round=Number(next.round);
+
+    // Copa/partida condicional ainda sem adversário:
+    // NÃO inventa nome e NÃO usa lixo de OCR. Mantém um estado explícito "a definir".
+    if(next.conditional && isPlaceholderOpponent(next.opponent)){
+      s.pendingFixture={
+        scheduleIndex:ev.index,
+        competitionType:next.competitionType||'cup',
+        round:next.round??null,
+        dateTime:next.dateTime||null,
+        dateText:next.dateText||null,
+        venue:next.venue||null,
+        opponent:null,
+        status:'awaiting_opponent'
+      };
+      clearOpponentScoutingForNextMatch(s,null);
+      s.opponent.teamName=null;
+      s.tactic=null;
+      return {...next,opponent:null,pendingOpponent:true};
+    }
+
+    // Partida real com adversário definido.
+    if(validOpponent(next.opponent) && !isPlaceholderOpponent(next.opponent)){
+      s.pendingFixture=null;
+      clearOpponentScoutingForNextMatch(s,next.opponent);
+      s.opponent.teamName=next.opponent;
+      return next;
+    }
+
+    // Se a linha não é confiável, não altera o adversário.
+    return null;
   }
 
   function findCurrentCalendarMatch(s){
@@ -136,20 +168,20 @@
 
     // 1) Fonte principal: adversário que já estava salvo no slot ANTES da leitura do resultado.
     if(currentOpp){
-      const byOpponent=rows.findIndex(x=>!x.played && !x.skipped && !x.placeholder && !x.conditional && norm(x.opponent)===currentOpp);
+      const byOpponent=rows.findIndex(x=>!x.played && !x.skipped && !x.placeholder && norm(x.opponent)===currentOpp);
       if(byOpponent>=0)return byOpponent;
     }
 
     // 2) Segunda fonte: rodada atual do slot.
     if(Number.isFinite(currentRound)){
-      const byRound=rows.findIndex(x=>!x.played && !x.skipped && !x.placeholder && !x.conditional && Number(x.round)===currentRound);
+      const byRound=rows.findIndex(x=>!x.played && !x.skipped && !x.placeholder && Number(x.round)===currentRound);
       if(byRound>=0)return byRound;
     }
 
     // 3) Só aceita fallback se houver EXATAMENTE uma partida válida não jogada.
     const pending=rows
       .map((x,i)=>({x,i}))
-      .filter(({x})=>!x.played && !x.skipped && !x.placeholder && !x.conditional && validOpponent(x.opponent));
+      .filter(({x})=>!x.played && !x.skipped && !x.placeholder && validOpponent(x.opponent) && !isPlaceholderOpponent(x.opponent));
     return pending.length===1?pending[0].i:-1;
   }
 
@@ -217,10 +249,10 @@
     const gf=Number(r?.gf),ga=Number(r?.ga);
     if(!Number.isFinite(gf)||!Number.isFinite(ga))throw new Error('Não consegui identificar o placar final.');
 
-    // IMPORTANTE: o nome extraído do vídeo do resultado NÃO pode mudar o adversário.
-    // Primeiro identifica a partida atual no calendário/slot; o calendário é a fonte de verdade.
     const currentCalendarIndex=findCurrentCalendarMatch(s);
     const currentCalendarMatch=currentCalendarIndex>=0 ? s.schedule[currentCalendarIndex] : null;
+
+    // O vídeo do resultado jamais troca o adversário pelo texto reconhecido.
     const opponent=currentCalendarMatch?.opponent || s.opponent?.teamName || null;
     const score=r?.score||`${gf}-${ga}`;
 
@@ -242,6 +274,7 @@
         strengthBucket:typeof strengthBucket==='function'?strengthBucket(s):null
       }
     };
+
     s.results=Array.isArray(s.results)?s.results:[];
     s.results.push(entry);
 
@@ -249,13 +282,13 @@
     const lesson=buildLearning(s,entry);
     s.tactic=null;
 
-    // Se o calendário não conseguiu identificar a partida atual com segurança,
-    // não "adivinha" a próxima nem avança adversário.
     let next=null;
     if(marked){
-      next=promoteNextMatch(s);
+      const playedIndex=s.schedule.indexOf(marked);
+      next=promoteNextMatch(s,playedIndex);
     }else{
-      s.lastCalendarSyncWarning='Resultado salvo, mas a partida atual não foi localizada com segurança no calendário. O adversário não foi alterado.';
+      // Se não conseguiu casar com o calendário, NÃO troca o slot.
+      s.lastCalendarSyncWarning='Resultado salvo, mas a partida atual não foi localizada com segurança no calendário. O adversário foi mantido.';
     }
 
     s.lastAnalysisAt=new Date().toISOString();
@@ -325,9 +358,8 @@
   v21ApplyCalendar=function(data){
     const s=selectedSlot();
     const rows=Array.isArray(data?.matches)?data.matches:[];
-    s.schedule=rows.map(x=>({..._oldNormalizeCalendar(x),skipped:false}));
+    s.schedule=rows.map(x=>({...normalizeCalendarOutcomeRow(x),skipped:false}));
 
-    // Se já existem resultados registrados, sincroniza o calendário sem inventar.
     for(const r of (s.results||[])){
       const rn=norm(r.opponent);
       if(!rn)continue;
@@ -343,6 +375,22 @@
             conditional:false,
             placeholder:false
           };
+        }
+      }
+    }
+
+    // NÃO sobrescreve slot que já tem adversário válido.
+    if(!validOpponent(s.opponent?.teamName) || isPlaceholderOpponent(s.opponent?.teamName)){
+      const first=nextScheduleEventAfter(s,-1);
+      if(first?.row && validOpponent(first.row.opponent) && !isPlaceholderOpponent(first.row.opponent)){
+        s.opponent.teamName=first.row.opponent;
+        s.match=s.match||{};
+        s.match.nextMatchAt=first.row.dateTime||s.match.nextMatchAt;
+        s.match.venue=first.row.venue||s.match.venue;
+      }
+    }
+    s.lastAnalysisAt=new Date().toISOString();
+  };
         }
       }
     }
@@ -502,7 +550,6 @@
 
   // ===== HOJE: sempre obedece ao slot selecionado =====
   nextAction=function(){
-    repairSlotFromCalendar(selectedSlot());
     const s=selectedSlot();
     if(!s||s.status!=='active'){
       return {
@@ -633,6 +680,70 @@
       </div>`);
   };
 
+
+  // ===== CALENDÁRIO: edição manual e sincronização explícita =====
+  window.editCalendarMatchV24=function(index){
+    const s=selectedSlot();
+    const x=s.schedule?.[index];
+    if(!x){toast('Partida não encontrada');return}
+    openModal(`<h2>Editar partida · Slot ${s.slotNumber}</h2>
+      <div class="field-edit">
+        <label>Adversário
+          <input id="calOppV24" value="${hEsc(x.opponent||'')}" placeholder="A definir">
+        </label>
+        <label>Local
+          <select id="calVenueV24">
+            <option value="">NI</option><option>Casa</option><option>Fora</option>
+          </select>
+        </label>
+        <label class="check">
+          <input id="calConditionalV24" type="checkbox" ${x.conditional?'checked':''}>
+          <span>Partida condicional / aguardando definição</span>
+        </label>
+        <div class="actions">
+          <button class="btn" onclick="saveCalendarMatchV24(${index})">Salvar partida</button>
+          <button class="btn ghost" onclick="saveCalendarMatchV24(${index},true)">Salvar e usar como próximo jogo</button>
+        </div>
+      </div>`);
+    const sel=document.getElementById('calVenueV24');
+    if(sel)sel.value=x.venue||'';
+  };
+
+  window.saveCalendarMatchV24=function(index,useAsNext=false){
+    const s=selectedSlot();
+    const x=s.schedule?.[index];
+    if(!x)return;
+    const opp=document.getElementById('calOppV24')?.value?.trim()||null;
+    const venue=document.getElementById('calVenueV24')?.value||null;
+    const conditional=!!document.getElementById('calConditionalV24')?.checked;
+
+    x.opponent=opp;
+    x.venue=venue;
+    x.conditional=conditional;
+    x.placeholder=!opp;
+    if(opp && !isPlaceholderOpponent(opp))x.placeholder=false;
+
+    if(useAsNext){
+      if(!opp || isPlaceholderOpponent(opp)){
+        toast('Informe um adversário válido antes de usar como próximo jogo');
+        return;
+      }
+      clearOpponentScoutingForNextMatch(s,opp);
+      s.opponent.teamName=opp;
+      s.match=s.match||{};
+      s.match.venue=venue;
+      s.match.nextMatchAt=x.dateTime||s.match.nextMatchAt||null;
+      if(Number.isFinite(Number(x.round)))s.round=Number(x.round);
+      s.pendingFixture=null;
+      s.tactic=null;
+    }
+
+    localStorage.setItem(STATE_KEY,JSON.stringify(state));
+    closeModal();
+    renderAll();
+    toast(useAsNext?'Próximo jogo atualizado manualmente':'Partida do calendário atualizada');
+  };
+
   // ===== INFORMAÇÕES COM DESTAQUE DO PRÓXIMO JOGO =====
   const _oldRenderInfo=renderInfo;
   renderInfo=function(){
@@ -662,10 +773,30 @@
       </div>`);
   };
 
+
+  const _calendarTableHtmlV24=calendarTableHtml;
+  calendarTableHtml=function(rows){
+    const s=selectedSlot();
+    return `<div class="calendar-wrap"><table class="simple-table calendar-table">
+      <thead><tr><th>Rod.</th><th>Tipo</th><th>Local</th><th>Adversário</th><th>Data/hora</th><th>Status</th><th></th></tr></thead>
+      <tbody>${(rows||[]).map((x,i)=>`<tr>
+        <td>${hEsc(x.round)}</td>
+        <td>${x.competitionType==='cup'?'🏆 Taça':'Liga'}</td>
+        <td>${hEsc(x.venue)}</td>
+        <td>${hEsc(isPlaceholderOpponent(x.opponent)?'A definir':x.opponent)}</td>
+        <td>${hEsc(x.dateTime?fmt(x.dateTime):`${x.dateText||'NI'} ${x.timeText||''}`)}</td>
+        <td>${x.played
+          ? `<span class="result-badge ${String(x.outcome||'').toUpperCase()==='V'?'win':String(x.outcome||'').toUpperCase()==='E'?'draw':'loss'}">${hEsc(calendarOutcomeLabel(x))}</span>${x.result?` · ${hEsc(x.result)}`:''}`
+          : x.skipped?'Ignorado':x.conditional?'Condicional':'Futuro'
+        }</td>
+        <td><button class="btn ghost tiny" onclick="editCalendarMatchV24(${i})">Editar</button></td>
+      </tr>`).join('')}</tbody>
+    </table></div>`;
+  };
+
   // Re-render após carregar a camada.
   try{
     localStorage.setItem('osm_ai_coach_patch_version',PATCH_VERSION);
-    repairAllSlotsFromCalendar();
     renderAll();
     renderAnalysisStatus();
   }catch(e){

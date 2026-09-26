@@ -144,3 +144,11 @@
 #view-history .section-head,
 #view-info .section-head,
 #view-pregame .section-head{margin-bottom:12px}
+
+
+/* v2.4.3 - calendário seguro/manual */
+.calendar-table th:last-child,.calendar-table td:last-child{width:74px;text-align:right}
+.pending-fixture-note{
+  padding:10px 12px;border-radius:11px;border:1px solid #7a6229;
+  background:#2d2612;color:#f4d77e;font-size:11px;margin:10px 0
+}

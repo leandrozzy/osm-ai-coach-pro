@@ -109,3 +109,26 @@ CORREÇÃO 2.4.2 — PRÓXIMO JOGO E PARTIDAS CONDICIONAIS
 - Ao abrir a nova versão, os slots são reparados automaticamente com base no calendário já salvo.
   Portanto, o Slot 2 deve sair de ASD e passar para Botev Plovdiv sem registrar o resultado novamente.
 - Corrigido também o cálculo de diferença de força: rival NI agora mostra NI, não +84.
+
+
+CORREÇÃO 2.4.3 — NÃO BAGUNÇAR SLOTS CORRETOS
+--------------------------------------------
+REGRA NOVA:
+1. Abrir/recarregar o app NUNCA recalcula ou troca o adversário atual.
+2. O adversário só muda:
+   - depois de registrar o resultado da partida atual e o calendário casar essa partida com segurança;
+   - após uma nova leitura de calendário quando o slot ainda não tem adversário válido;
+   - manualmente pelo botão Editar da linha do calendário.
+3. Copa/Taça condicional sem adversário:
+   - fica "A definir";
+   - nunca recebe nome inventado;
+   - permanece no calendário;
+   - quando o adversário for definido, releia o calendário OU use Editar > Salvar e usar como próximo jogo.
+4. A ordem original do calendário é preservada. O app não reorganiza todos os jogos ao abrir.
+5. Slots que já estavam corretos não são alterados automaticamente.
+
+IMPORTANTE PARA O SLOT 1
+A 2.4.2 já pode ter gravado um adversário incorreto no localStorage.
+A 2.4.3 NÃO tentará "adivinhar" novamente.
+Use Informações > calendário > Editar na partida correta > "Salvar e usar como próximo jogo"
+UMA ÚNICA VEZ para restaurar o Slot 1. Depois disso ele ficará preservado.
