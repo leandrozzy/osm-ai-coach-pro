@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#07111f">
-  <meta name="description" content="OSM AI Coach Pro V2 — central inteligente para 4 slots, análise, tática, mercado e aprendizado.">
+  <meta name="description" content="OSM AI Coach Pro V2">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="styles.css?v=2.4.3">
-  <link rel="stylesheet" href="hotfix-v24.css?v=2.4.3">
+  <link rel="stylesheet" href="styles.css?v=2.5.0">
+  <link rel="stylesheet" href="clean-fix-v25.css?v=2.5.0">
   <title>OSM AI Coach Pro V2</title>
 </head>
 <body>
@@ -21,7 +21,7 @@
       </div>
     </div>
     <div class="top-actions">
-      <span class="env-pill">MAIN 2.4.3.2</span>
+      <span class="env-pill">2.5 CLEAN</span>
       <button id="apiBtn" class="btn ghost">API Gemini</button>
     </div>
   </header>
@@ -44,10 +44,7 @@
     <section id="view-dashboard" class="view active">
       <div id="heroAction" class="hero"></div>
       <div class="section-head">
-        <div>
-          <span class="eyebrow">CENTRAL DO MANAGER</span>
-          <h2>Seus 4 slots</h2>
-        </div>
+        <div><span class="eyebrow">SLOT SELECIONADO</span><h2>Resumo do slot</h2></div>
         <button id="refreshBtn" class="icon-btn" title="Atualizar">↻</button>
       </div>
       <div id="slotsGrid" class="slots-grid"></div>
@@ -55,16 +52,12 @@
     </section>
 
     <section id="view-pregame" class="view">
-      <div class="section-head">
-        <div><span class="eyebrow">PRÉ-JOGO</span><h2>Plano completo da partida</h2></div>
-      </div>
+      <div class="section-head"><div><span class="eyebrow">PRÉ-JOGO</span><h2>Plano completo da partida</h2></div></div>
       <div id="pregameContent"></div>
     </section>
 
     <section id="view-analyze" class="view">
-      <div class="section-head">
-        <div><span class="eyebrow">COLETA INTELIGENTE</span><h2>Ler vídeo ou imagens</h2></div>
-      </div>
+      <div class="section-head"><div><span class="eyebrow">COLETA INTELIGENTE</span><h2>Ler vídeo ou imagens</h2></div></div>
 
       <div class="mode-grid">
         <button class="mode-card active" data-mode="tactic"><b>⚽ Partida</b><span>Adversário, árbitro, Data Analyst e tática</span></button>
@@ -84,10 +77,7 @@
         <div class="upload-options">
           <label>Slot
             <select id="analysisSlot">
-              <option value="1">Slot 1</option>
-              <option value="2">Slot 2</option>
-              <option value="3">Slot 3</option>
-              <option value="4">Slot 4</option>
+              <option value="1">Slot 1</option><option value="2">Slot 2</option><option value="3">Slot 3</option><option value="4">Slot 4</option>
             </select>
           </label>
           <label class="check"><input id="autoTactic" type="checkbox" checked><span>Gerar tática automaticamente quando a leitura estiver suficiente</span></label>
@@ -100,14 +90,14 @@
         <div id="analysisStatusPanel" class="analysis-status neutral"><div class="analysis-status-icon">●</div><div><b>Nenhuma análise nesta seção</b><span>Escolha uma mídia para começar.</span></div></div>
         <div id="mediaPreview" class="preview-grid"></div>
       </div>
-
-      <div id="analysisDiagnostics" class="small muted" style="padding:8px 4px"></div><div id="coverageContent"></div>
+      <div id="analysisDiagnostics" class="small muted" style="padding:8px 4px"></div>
+      <div id="coverageContent"></div>
       <div id="analysisContent"></div>
     </section>
 
     <section id="view-info" class="view">
       <div class="section-head">
-        <div><span class="eyebrow">INFORMAÇÕES DO SLOT</span><h2>Liga, time e calendário</h2></div>
+        <div><span class="eyebrow">INFORMAÇÕES</span><h2>Liga, time e calendário</h2></div>
         <button id="infoEditBtn" class="btn ghost">Editar informações</button>
       </div>
       <div id="infoContent"></div>
@@ -115,7 +105,7 @@
 
     <section id="view-market" class="view">
       <div class="section-head">
-        <div><span class="eyebrow">DIRETOR ESPORTIVO IA</span><h2>Elenco, evolução e plano</h2></div>
+        <div><span class="eyebrow">DIRETOR</span><h2>Elenco, evolução e plano</h2></div>
         <button id="marketAnalyzeBtn" class="btn ghost">Recalcular plano</button>
       </div>
       <div id="marketContent"></div>
@@ -132,7 +122,7 @@
     </section>
 
     <section id="view-settings" class="view">
-      <div class="section-head"><div><span class="eyebrow">CONFIGURAÇÃO</span><h2>Preferências da V2</h2></div></div>
+      <div class="section-head"><div><span class="eyebrow">CONFIGURAÇÃO</span><h2>Preferências</h2></div></div>
       <div class="card form">
         <label>Seu nick no OSM<input id="userNick" value="leandrozzy"></label>
         <label>Modelo Gemini
@@ -145,16 +135,11 @@
         </label>
         <label>Alerta antes da partida (min)<input id="notifyMinutes" type="number" min="1" max="180" value="20"></label>
         <label class="check"><input id="notifyEnabled" type="checkbox" checked><span>Notificações enquanto o app estiver aberto/instalado</span></label>
-        <div class="small muted">Leitura: motor atual + OCR local + validações adicionais da versão 2.4.</div>
-        <div class="actions">
-          <button id="saveSettingsBtn" class="btn">Salvar</button>
-          <button id="notifyBtn" class="btn ghost">Permitir notificações</button>
-        </div>
+        <div class="actions"><button id="saveSettingsBtn" class="btn">Salvar</button><button id="notifyBtn" class="btn ghost">Permitir notificações</button></div>
       </div>
 
       <div class="card">
-        <h3>Backup e migração</h3>
-        <p class="muted">A atualização 2.4 preserva o armazenamento atual. Ainda assim, exporte um backup antes de substituir os arquivos.</p>
+        <h3>Backup</h3>
         <div class="actions">
           <button id="migrateBtn" class="btn ghost">Importar backup da V1</button><input id="v1ImportInput" type="file" accept="application/json" hidden>
           <button id="exportBtn" class="btn ghost">Exportar backup V2</button>
@@ -165,38 +150,27 @@
   </main>
 
   <div id="modal" class="modal" aria-hidden="true">
-    <div class="modal-sheet">
-      <button id="modalClose" class="modal-close">×</button>
-      <div id="modalBody"></div>
-    </div>
+    <div class="modal-sheet"><button id="modalClose" class="modal-close">×</button><div id="modalBody"></div></div>
   </div>
   <div id="toast" class="toast"></div>
 
   <script>
   (async function(){
-    try {
-      if ('serviceWorker' in navigator) {
-        const regs = await navigator.serviceWorker.getRegistrations();
-        for (const reg of regs) {
-          try { await reg.unregister(); } catch(e) {}
-        }
+    try{
+      if('serviceWorker' in navigator){
+        const regs=await navigator.serviceWorker.getRegistrations();
+        for(const reg of regs){try{await reg.unregister()}catch(e){}}
       }
-      if ('caches' in window) {
-        const keys = await caches.keys();
-        for (const key of keys) {
-          if (key.startsWith('osm-pro-v4-')) {
-            try { await caches.delete(key); } catch(e) {}
-          }
-        }
+      if('caches' in window){
+        const keys=await caches.keys();
+        for(const key of keys){if(key.startsWith('osm-pro-v4-')){try{await caches.delete(key)}catch(e){}}}
       }
-    } catch(e) {
-      console.warn('Cache cleanup skipped', e);
-    }
+    }catch(e){}
   })();
   </script>
 
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script src="app.js?v=2.4.3"></script>
-  <script src="hotfix-v24.js?v=2.4.3"></script>
+  <script src="app.js?v=2.5.0"></script>
+  <script src="clean-fix-v25.js?v=2.5.0"></script>
 </body>
 </html>

@@ -1,0 +1,81 @@
+/* CLEAN FIX 2.5.0 — apenas simplificação visual */
+
+.clean-slot-chip{
+  display:flex!important;
+  align-items:center;
+  gap:7px;
+  min-width:105px;
+  justify-content:flex-start;
+}
+.clean-slot-chip b{
+  display:grid;
+  place-items:center;
+  width:28px;height:28px;
+  border-radius:8px;
+  background:#173650;
+  color:#7bdfff;
+  font-size:11px;
+  flex:0 0 auto;
+}
+.clean-slot-chip span{
+  max-width:95px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font-size:11px;
+}
+.clean-slot-chip.active b{
+  background:#247961;
+  color:#effff9;
+}
+
+.single-slot-grid{
+  grid-template-columns:minmax(0,1fr)!important;
+}
+.single-slot-grid .slot-card{
+  max-width:760px;
+}
+
+.clean-calendar{
+  min-width:760px;
+}
+.clean-calendar th:last-child,
+.clean-calendar td:last-child{
+  width:74px;
+  text-align:right;
+  position:sticky;
+  right:0;
+  background:#0b1d2e;
+}
+.calendar-edit-btn{
+  display:inline-flex!important;
+  min-width:54px;
+  justify-content:center;
+}
+
+#activeSlotBanner{display:none!important}
+
+@media(max-width:640px){
+  .slot-switcher{
+    padding:8px 9px;
+  }
+  .clean-slot-chip{
+    min-width:105px;
+    padding:7px 8px!important;
+  }
+  .clean-slot-chip span{
+    max-width:70px;
+  }
+  .hero{
+    min-height:120px;
+  }
+  .hero h2{
+    font-size:21px;
+  }
+  .slots-grid.single-slot-grid{
+    display:block;
+  }
+  .clean-calendar{
+    min-width:720px;
+  }
+}
