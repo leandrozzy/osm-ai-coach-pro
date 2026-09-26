@@ -12,7 +12,7 @@
   Não carrega os hotfixes 2.4.x anteriores.
 */
 (function(){
-  const CLEAN_VERSION='2.5.4';
+  const CLEAN_VERSION='2.5.5';
 
   function e(v){
     return String(v ?? 'NI').replace(/[&<>"']/g,m=>({
@@ -1045,7 +1045,7 @@ VALIDAÇÃO FORTE DE DATAS:
         <div class="result-register-block">
           <span class="eyebrow">OPÇÃO 1 · AUTOMÁTICA</span>
           <h3>Enviar vídeo do resultado</h3>
-          <p class="small muted">Mostre o placar final e, se possível, estatísticas e formações. O app lê o vídeo e já registra o resultado no slot.</p>
+          <p class="small muted">Mostre o placar final e, se possível, estatísticas e formações. Ao escolher a mídia, a análise começa automaticamente e o resultado é registrado no slot.</p>
           <input id="resultVideoInput" type="file" accept="video/*,image/*" hidden>
           <div class="actions">
             <button class="btn" onclick="chooseResultVideo(${slotNo})">Escolher vídeo/imagem</button>
@@ -1099,12 +1099,27 @@ VALIDAÇÃO FORTE DE DATAS:
       pendingResultVideoFile=f;
       const info=document.getElementById('resultVideoInfo');
       const btn=document.getElementById('analyzeResultVideoBtn');
+      const prog=document.getElementById('resultVideoProgress');
+
       if(f){
         if(info)info.textContent=`${f.name} · ${(f.size/1024/1024).toFixed(1)} MB`;
-        if(btn)btn.disabled=false;
+        if(btn){
+          btn.disabled=false;
+          btn.textContent='Analisar e registrar';
+        }
+        if(prog)prog.textContent='Mídia selecionada. Iniciando análise automaticamente…';
+
+        // No registro de resultado, selecionar a mídia já deve iniciar a análise.
+        // Pequeno atraso para o Android concluir o retorno do seletor antes de processar o arquivo.
+        setTimeout(()=>{
+          if(pendingResultVideoFile===f){
+            analyzeResultVideo(slotNo);
+          }
+        },250);
       }else{
         if(info)info.textContent='Nenhuma mídia selecionada.';
         if(btn)btn.disabled=true;
+        if(prog)prog.textContent='';
       }
     };
     try{
@@ -1115,12 +1130,16 @@ VALIDAÇÃO FORTE DE DATAS:
     }
   };
 
+  let resultMediaAnalysisBusy=false;
+
   window.analyzeResultVideo=async function(slotNo){
+    if(resultMediaAnalysisBusy)return;
     const s=state.slots[slotNo-1];
     const file=pendingResultVideoFile;
     if(!file){toast('Escolha um vídeo ou imagem do resultado');return}
     if(!localStorage.getItem(API_KEY_STORAGE)){apiModal('Configure a API Gemini antes de analisar o resultado.');return}
 
+    resultMediaAnalysisBusy=true;
     const btn=document.getElementById('analyzeResultVideoBtn');
     const prog=document.getElementById('resultVideoProgress');
     if(btn){btn.disabled=true;btn.textContent='Analisando…'}
@@ -1163,14 +1182,16 @@ VALIDAÇÃO FORTE DE DATAS:
       });
 
       localStorage.setItem(STATE_KEY,JSON.stringify(state));
+      resultMediaAnalysisBusy=false;
       closeModal();
       renderAll();
       showView('learning');
       toast(`Resultado ${gf}-${ga} registrado no Slot ${slotNo}`);
     }catch(err){
+      resultMediaAnalysisBusy=false;
       if(prog)prog.textContent=`Falha: ${err?.message||String(err)}`;
       toast(err?.message||'Falha ao analisar resultado');
-      if(btn){btn.disabled=false;btn.textContent='Analisar e registrar'}
+      if(btn){btn.disabled=false;btn.textContent='Tentar analisar novamente'}
     }
   };
 
