@@ -12,7 +12,7 @@
   Não carrega os hotfixes 2.4.x anteriores.
 */
 (function(){
-  const CLEAN_VERSION='2.5.8';
+  const CLEAN_VERSION='2.5.9';
 
   function e(v){
     return String(v ?? 'NI').replace(/[&<>"']/g,m=>({
@@ -1693,7 +1693,22 @@ Porém, se realmente não estiver visível, mantenha null — nunca invente.`;
   function strong433ButtonHtml(s){
     if(!s || s.status!=='active')return '';
     const d=strengthDiff(s);
-    if(d===null || d<13)return '';
+
+    if(d===null){
+      return `<div class="card strong433-action-card strong433-waiting">
+        <div>
+          <span class="eyebrow">TÁTICA FORTE 4-3-3</span>
+          <h3>Informe a força rival</h3>
+          <p class="small muted">A força rival está NI. O app precisa desse valor para confirmar se sua vantagem é de pelo menos 13 pontos.</p>
+        </div>
+        <div class="actions">
+          <button class="btn ghost" onclick="editField(${s.slotNumber},'opponent.overall')">Informar força rival</button>
+        </div>
+      </div>`;
+    }
+
+    if(d<13)return '';
+
     return `<div class="card strong433-action-card">
       <div>
         <span class="eyebrow">VANTAGEM DE FORÇA +${e(d)}</span>

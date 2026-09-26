@@ -292,3 +292,13 @@
   padding-top:10px;
   border-top:1px solid #6d5727;
 }
+
+
+/* 2.5.9 — estado quando força rival está NI */
+.strong433-waiting{
+  border-color:#315a7a!important;
+  background:linear-gradient(180deg,#0c2032,#091827)!important;
+}
+.strong433-waiting h3{
+  margin:5px 0 4px;
+}
