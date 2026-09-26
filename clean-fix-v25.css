@@ -258,3 +258,17 @@
   background:#0b2030;color:#c7d8e4;font-size:11px;line-height:1.4
 }
 .learning-pattern{border-left:3px solid #35d1ad}
+
+
+/* 2.5.7 — campos manuais inteligentes */
+.bulk-smart-fields select,
+.bulk-smart-fields input{
+  min-height:44px;
+}
+.bulk-smart-fields label{
+  padding:10px 0;
+  border-bottom:1px solid #17334d;
+}
+.bulk-smart-fields label:last-of-type{
+  border-bottom:0;
+}

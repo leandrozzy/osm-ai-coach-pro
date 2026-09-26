@@ -12,7 +12,7 @@
   Não carrega os hotfixes 2.4.x anteriores.
 */
 (function(){
-  const CLEAN_VERSION='2.5.6';
+  const CLEAN_VERSION='2.5.7';
 
   function e(v){
     return String(v ?? 'NI').replace(/[&<>"']/g,m=>({
@@ -1440,6 +1440,251 @@ REGRAS PARA USAR O APRENDIZADO:
       b.className='job-banner hidden';
     }
   }
+
+
+  // ------------------------------------------------------------
+  // 2.5.7 — CAMPOS MANUAIS COM CONTROLES CORRETOS
+  // ------------------------------------------------------------
+  const FIELD_NUMBER_PATHS=new Set([
+    'myTeam.overall','opponent.overall',
+    'myTeam.goalkeeper','myTeam.defence','myTeam.midfield','myTeam.attack',
+    'opponent.goalkeeper','opponent.defence','opponent.midfield','opponent.attack',
+    'opponent.stadium','opponent.loginBonus'
+  ]);
+
+  const FIELD_BOOLEAN_PATHS=new Set([
+    'opponent.human','opponent.trainingCamp','opponent.secretTraining','opponent.offside'
+  ]);
+
+  const FIELD_SELECT_OPTIONS={
+    'match.venue':['Casa','Fora'],
+    'match.refereeColor':['Verde','Amarelo','Laranja','Vermelho'],
+    'opponent.formation':FORMATIONS,
+    'opponent.style':GAME_PLANS,
+    'opponent.marking':['À zona','Individual']
+  };
+
+  function fieldControlHtml(path,value,id){
+    const current=(value===null||value===undefined||value===''?'NI':value);
+
+    if(FIELD_BOOLEAN_PATHS.has(path)){
+      const vv=typeof value==='boolean'?String(value):'NI';
+      return `<select id="${id}" data-path="${e(path)}" data-kind="boolean">
+        <option value="NI" ${vv==='NI'?'selected':''}>NI</option>
+        <option value="true" ${vv==='true'?'selected':''}>Sim</option>
+        <option value="false" ${vv==='false'?'selected':''}>Não</option>
+      </select>`;
+    }
+
+    const opts=FIELD_SELECT_OPTIONS[path];
+    if(Array.isArray(opts)){
+      return `<select id="${id}" data-path="${e(path)}" data-kind="select">
+        <option value="NI" ${current==='NI'?'selected':''}>NI</option>
+        ${opts.map(x=>`<option value="${e(x)}" ${String(current)===String(x)?'selected':''}>${e(x)}</option>`).join('')}
+      </select>`;
+    }
+
+    if(FIELD_NUMBER_PATHS.has(path)){
+      return `<input id="${id}" data-path="${e(path)}" data-kind="number" type="number" inputmode="numeric" step="1" value="${current==='NI'?'':e(current)}" placeholder="NI">`;
+    }
+
+    return `<input id="${id}" data-path="${e(path)}" data-kind="text" value="${current==='NI'?'':e(current)}" placeholder="NI">`;
+  }
+
+  function readManualControl(el){
+    const kind=el?.dataset?.kind||'text';
+    const raw=String(el?.value??'').trim();
+    if(!raw || raw.toUpperCase()==='NI')return null;
+    if(kind==='boolean')return raw==='true';
+    if(kind==='number'){
+      const num=Number(raw);
+      return Number.isFinite(num)?num:null;
+    }
+    return raw;
+  }
+
+  window.editField=function(slotNo,path){
+    const s=state.slots[slotNo-1];
+    const def=FIELD_DEFS.find(x=>x[0]===path);
+    const label=def?.[1]||path;
+    const value=getPath(s,path);
+
+    openModal(`<h2>Editar · ${e(label)}</h2>
+      <div class="field-edit">
+        <label>Valor
+          ${fieldControlHtml(path,value,'fieldValue')}
+        </label>
+        <p class="small muted">Campos com opções fixas usam seleção. NI significa informação desconhecida.</p>
+        <button class="btn" onclick="saveEditedField(${slotNo},'${e(path)}')">Salvar</button>
+      </div>`);
+  };
+
+  window.saveEditedField=function(slotNo,path){
+    const s=state.slots[slotNo-1];
+    const el=document.getElementById('fieldValue');
+    const value=readManualControl(el);
+    setField(s,path,value,'manual',1);
+    calcQuality(s);
+    s.tactic=null;
+    localStorage.setItem(STATE_KEY,JSON.stringify(state));
+    closeModal();
+    renderAll();
+    renderPregame();
+    toast('Campo corrigido');
+  };
+
+  window.editAllFields=function(slotNo,missingOnly=false){
+    const s=state.slots[slotNo-1];
+    const rows=FIELD_DEFS.filter(([path])=>{
+      const v=getPath(s,path);
+      return !missingOnly || !(hasValue(v)||typeof v==='boolean');
+    });
+
+    openModal(`<h2>${missingOnly?'Completar campos ausentes':'Corrigir dados'} · Slot ${slotNo}</h2>
+      <div class="field-edit bulk-smart-fields">
+        ${rows.map(([path,label],i)=>`
+          <label>
+            ${e(label)}
+            ${fieldControlHtml(path,getPath(s,path),`bulk_${i}`)}
+          </label>`).join('')}
+        <p class="small muted">Selecione as opções corretas. Texto livre ficou apenas onde realmente é necessário.</p>
+        <button class="btn" onclick="saveBulkFields(${slotNo})">Salvar alterações</button>
+      </div>`);
+  };
+
+  window.saveBulkFields=function(slotNo){
+    const s=state.slots[slotNo-1];
+    document.querySelectorAll('[id^="bulk_"]').forEach(el=>{
+      const path=el.dataset.path;
+      if(!path)return;
+      setField(s,path,readManualControl(el),'manual',1);
+    });
+    calcQuality(s);
+    s.tactic=null;
+    localStorage.setItem(STATE_KEY,JSON.stringify(state));
+    closeModal();
+    renderAll();
+    renderPregame();
+    toast('Dados atualizados');
+  };
+
+  // ------------------------------------------------------------
+  // 2.5.7 — ANÁLISE DE PARTIDA MAIS COMPLETA
+  // ------------------------------------------------------------
+  const _analyze257=v21Analyze;
+
+  function evenlySpacedFrames(frames,max){
+    const sorted=[...(frames||[])].sort((a,b)=>(a.time||0)-(b.time||0));
+    if(sorted.length<=max)return sorted;
+    const out=[];
+    for(let i=0;i<max;i++){
+      const idx=Math.round(i*(sorted.length-1)/Math.max(1,max-1));
+      if(sorted[idx]&&!out.includes(sorted[idx]))out.push(sorted[idx]);
+    }
+    return out;
+  }
+
+  v21Analyze=async function(files){
+    if(analysisMode!=='tactic')return _analyze257(files);
+
+    const slotNo=Number(document.getElementById('analysisSlot')?.value)||state.selectedSlot;
+    state.selectedSlot=slotNo;
+    const video=files.find(f=>String(f.type||'').startsWith('video/'));
+    const images=files.filter(f=>String(f.type||'').startsWith('image/'));
+    let frames=[];
+
+    setProgress(5,'Capturando mais telas da partida…');
+
+    if(video){
+      frames=await v21ExtractVideoFrames(video,32);
+    }else if(images.length){
+      for(const f of images)frames.push(await v21ImageToFrame(f));
+    }else{
+      throw new Error('Selecione um vídeo ou imagens do OSM.');
+    }
+
+    v21RenderEvidence(frames);
+    setProgress(18,'OCR local em toda a análise…');
+    const ocr=await v21RunLocalOcr(frames);
+
+    const required=v21SelectRequiredTacticFrames(frames,ocr);
+    let evidence=required.filter(x=>x.frame).map(x=>x.frame);
+
+    for(const f of evenlySpacedFrames(frames,12)){
+      if(!evidence.includes(f))evidence.push(f);
+      if(evidence.length>=14)break;
+    }
+
+    const missingScreens=required.filter(x=>!x.frame).map(x=>x.label);
+    if(document.getElementById('analysisDiagnostics')){
+      document.getElementById('analysisDiagnostics').textContent=
+        missingScreens.length
+          ? `Algumas telas não foram classificadas com certeza (${missingScreens.join(', ')}). A IA continuará usando quadros distribuídos do vídeo.`
+          : 'Todas as telas principais foram localizadas. Validando os campos…';
+    }
+
+    setProgress(58,'Conferindo forças, árbitro e Data Analyst…');
+    const result=await v21AnalyzePackage(ocr,evidence,'tactic');
+    v21ApplyCapture(result.capture||result.captures?.[0]||result);
+    localStorage.setItem(STATE_KEY,JSON.stringify(state));
+
+    const s=selectedSlot();
+    calcQuality(s);
+    renderCoverage(s);
+    renderAnalysisSummary(s);
+    renderPregame();
+
+    if(document.getElementById('autoTactic')?.checked && !s.tactic){
+      await generateTactic(slotNo);
+    }
+
+    const missingNow=missingRequired(s);
+    setProgress(100,missingNow.length?'Análise concluída com campos pendentes':'Análise completa');
+    setAnalysisRun(
+      s,
+      'tactic',
+      missingNow.length?'warning':'success',
+      missingNow.length
+        ? `${missingNow.length} campo(s) essencial(is) ainda não identificado(s). Complete apenas os que souber.`
+        : `Cobertura ${s.analysisQuality}% · dados essenciais confirmados.`,
+      {quality:s.analysisQuality,missing:missingNow}
+    );
+    job(
+      missingNow.length
+        ? `Partida analisada. ${missingNow.length} campo(s) essencial(is) ficaram pendentes.`
+        : 'Partida analisada com dados essenciais completos.',
+      'done'
+    );
+  };
+  window.v21Analyze=v21Analyze;
+
+  const _prompt257=v21Prompt;
+  v21Prompt=function(ocr,mode){
+    let p=_prompt257(ocr,mode);
+    if(mode==='tactic'){
+      p+=`
+
+REVISÃO FINAL OBRIGATÓRIA DA PARTIDA:
+Antes de responder, percorra novamente TODAS as imagens enviadas e tente localizar, separadamente:
+1. meu time e adversário;
+2. casa/fora;
+3. árbitro;
+4. força geral dos dois times;
+5. GOL/DEF/MEI/ATA dos dois times;
+6. humano/CPU e manager rival;
+7. bônus de login rival;
+8. estádio rival;
+9. campo de treinamento e treino secreto;
+10. formação rival;
+11. plano rival;
+12. marcação rival;
+13. impedimento rival.
+
+Não use null só porque uma tela não foi classificada pelo OCR. Confira visualmente todos os quadros.
+Porém, se realmente não estiver visível, mantenha null — nunca invente.`;
+    }
+    return p;
+  };
 
   // ------------------------------------------------------------
   // INICIALIZAÇÃO — NÃO altera adversário/rodada/calendário
