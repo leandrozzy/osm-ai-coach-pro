@@ -12,7 +12,7 @@
   Não carrega os hotfixes 2.4.x anteriores.
 */
 (function(){
-  const CLEAN_VERSION='2.5.1';
+  const CLEAN_VERSION='2.5.3';
 
   function e(v){
     return String(v ?? 'NI').replace(/[&<>"']/g,m=>({
@@ -1024,6 +1024,241 @@ VALIDAÇÃO FORTE DE DATAS:
     job('Calendário atualizado.','done');
   };
   window.v21Analyze=v21Analyze;
+
+
+
+  // ------------------------------------------------------------
+  // 2.5.2 — RESULTADO CENTRALIZADO EM HOJE
+  // ------------------------------------------------------------
+  let pendingResultVideoFile=null;
+
+  window.resultModal=function(slotNo){
+    const s=state.slots[slotNo-1];
+    if(!s || s.status!=='active'){toast('Configure o slot primeiro');return}
+
+    pendingResultVideoFile=null;
+
+    openModal(`<h2>Registrar resultado · Slot ${slotNo}</h2>
+      <p class="small muted">${e(s.teamName||'Meu time')} × ${e(s.opponent?.teamName||'Adversário NI')}</p>
+
+      <div class="result-register-tabs">
+        <div class="result-register-block">
+          <span class="eyebrow">OPÇÃO 1 · AUTOMÁTICA</span>
+          <h3>Enviar vídeo do resultado</h3>
+          <p class="small muted">Mostre o placar final e, se possível, estatísticas e formações. O app lê o vídeo e já registra o resultado no slot.</p>
+          <input id="resultVideoInput" type="file" accept="video/*,image/*" hidden>
+          <div class="actions">
+            <button class="btn" onclick="chooseResultVideo(${slotNo})">Escolher vídeo/imagem</button>
+            <button id="analyzeResultVideoBtn" class="btn ghost" onclick="analyzeResultVideo(${slotNo})" disabled>Analisar e registrar</button>
+          </div>
+          <div id="resultVideoInfo" class="small muted">Nenhuma mídia selecionada.</div>
+          <div id="resultVideoProgress" class="small muted"></div>
+        </div>
+
+        <div class="result-register-divider"><span>ou</span></div>
+
+        <div class="result-register-block">
+          <span class="eyebrow">OPÇÃO 2 · MANUAL</span>
+          <h3>Informar placar</h3>
+          <div class="kpis">
+            <label>Meus gols<input id="rGF" type="number" min="0"></label>
+            <label>Gols rival<input id="rGA" type="number" min="0"></label>
+          </div>
+          <label>Observação<textarea id="rNote"></textarea></label>
+          <button class="btn ghost" onclick="saveResult(${slotNo})">Salvar resultado manualmente</button>
+        </div>
+      </div>`);
+  };
+
+  window.chooseResultVideo=function(slotNo){
+    const input=document.getElementById('resultVideoInput');
+    if(!input)return;
+    input.value='';
+    input.onchange=()=>{
+      const f=input.files?.[0]||null;
+      pendingResultVideoFile=f;
+      const info=document.getElementById('resultVideoInfo');
+      const btn=document.getElementById('analyzeResultVideoBtn');
+      if(f){
+        if(info)info.textContent=`${f.name} · ${(f.size/1024/1024).toFixed(1)} MB`;
+        if(btn)btn.disabled=false;
+      }else{
+        if(info)info.textContent='Nenhuma mídia selecionada.';
+        if(btn)btn.disabled=true;
+      }
+    };
+    try{
+      if(typeof input.showPicker==='function')input.showPicker();
+      else input.click();
+    }catch{
+      input.click();
+    }
+  };
+
+  window.analyzeResultVideo=async function(slotNo){
+    const s=state.slots[slotNo-1];
+    const file=pendingResultVideoFile;
+    if(!file){toast('Escolha um vídeo ou imagem do resultado');return}
+    if(!localStorage.getItem(API_KEY_STORAGE)){apiModal('Configure a API Gemini antes de analisar o resultado.');return}
+
+    const btn=document.getElementById('analyzeResultVideoBtn');
+    const prog=document.getElementById('resultVideoProgress');
+    if(btn){btn.disabled=true;btn.textContent='Analisando…'}
+    if(prog)prog.textContent='Capturando o resultado…';
+
+    try{
+      let frames=[];
+      if(String(file.type||'').startsWith('video/')){
+        frames=await v21ExtractVideoFrames(file,18);
+      }else if(String(file.type||'').startsWith('image/')){
+        frames=[await v21ImageToFrame(file)];
+      }else{
+        throw new Error('Formato de mídia não suportado.');
+      }
+
+      if(prog)prog.textContent='Lendo placar e estatísticas…';
+      const ocr=await v21RunLocalOcr(frames);
+
+      // Resultado precisa de cobertura do início ao fim, sem depender apenas dos quadros "mais diferentes".
+      const sorted=[...frames].sort((a,b)=>(a.time||0)-(b.time||0));
+      const evidence=[];
+      const wanted=Math.min(8,sorted.length);
+      for(let i=0;i<wanted;i++){
+        const idx=Math.round(i*(sorted.length-1)/Math.max(1,wanted-1));
+        if(sorted[idx]&&!evidence.includes(sorted[idx]))evidence.push(sorted[idx]);
+      }
+
+      if(prog)prog.textContent='Interpretando resultado…';
+      const data=await v21AnalyzePackage(ocr,evidence,'result');
+
+      const gf=Number(data?.gf),ga=Number(data?.ga);
+      if(!Number.isFinite(gf)||!Number.isFinite(ga)){
+        throw new Error('Não consegui confirmar o placar no vídeo. Tente outro vídeo ou informe manualmente.');
+      }
+
+      const done=finishResult(s,{
+        ...data,
+        gf,ga,
+        score:data?.score||`${gf}-${ga}`
+      });
+
+      localStorage.setItem(STATE_KEY,JSON.stringify(state));
+      closeModal();
+      renderAll();
+      showView('learning');
+      toast(`Resultado ${gf}-${ga} registrado no Slot ${slotNo}`);
+    }catch(err){
+      if(prog)prog.textContent=`Falha: ${err?.message||String(err)}`;
+      toast(err?.message||'Falha ao analisar resultado');
+      if(btn){btn.disabled=false;btn.textContent='Analisar e registrar'}
+    }
+  };
+
+  // ------------------------------------------------------------
+  // 2.5.2 — TÁTICA OFENSIVA PADRÃO PARA VANTAGEM MUITO GRANDE
+  // ------------------------------------------------------------
+  function offensiveDefaultTactic(){
+    return {
+      formation:'4-3-3 A',
+      gamePlan:'Jogar pelas alas',
+      pressure:78,
+      mentality:82,
+      tempo:84,
+      marking:'À zona',
+      offside:'Sim',
+      tackling:'Normal',
+      attackInstruction:'Atacar apenas',
+      midfieldInstruction:'Pressionar na frente',
+      defenceInstruction:'Apoiar o meio-campo',
+      reason:'Tática ofensiva padrão para cenário em que o seu time é muito superior em força.',
+      confidenceScore:.72,
+      generatedAt:new Date().toISOString(),
+      engine:'Padrão ofensivo 2.5.2'
+    };
+  }
+
+  function shouldShowOffensiveDefault(s){
+    const d=strengthDiff(s);
+    return d!==null && d>=13;
+  }
+
+  window.toggleOffensiveDefault=function(slotNo){
+    const box=document.getElementById(`offensiveDefaultBox-${slotNo}`);
+    if(!box)return;
+    box.classList.toggle('hidden');
+  };
+
+  window.applyOffensiveDefault=function(slotNo){
+    const s=state.slots[slotNo-1];
+    if(!s || !shouldShowOffensiveDefault(s)){
+      toast('A tática ofensiva padrão só fica disponível quando a vantagem de força é de pelo menos 13.');
+      return;
+    }
+    s.tactic=offensiveDefaultTactic();
+    localStorage.setItem(STATE_KEY,JSON.stringify(state));
+    renderAll();
+    showView('pregame');
+    toast('Tática ofensiva padrão aplicada');
+  };
+
+  function offensiveDefaultHtml(s){
+    if(!s || !shouldShowOffensiveDefault(s))return '';
+    const t=offensiveDefaultTactic();
+    return `<div class="offensive-default-wrap">
+      <button class="btn offensive-default-toggle" onclick="toggleOffensiveDefault(${s.slotNumber})">
+        ⚡ Tática ofensiva padrão
+      </button>
+      <div id="offensiveDefaultBox-${s.slotNumber}" class="card offensive-default-box hidden">
+        <div class="section-head compact-head">
+          <div>
+            <span class="eyebrow">VANTAGEM DE FORÇA ${e('+'+strengthDiff(s))}</span>
+            <h3>Opção ofensiva padrão</h3>
+          </div>
+        </div>
+        <table class="tactic-table">
+          <tr><td>Formação</td><td>${e(t.formation)}</td></tr>
+          <tr><td>Estilo de jogo</td><td>${e(t.gamePlan)}</td></tr>
+          <tr><td>Pressão</td><td>${t.pressure}</td></tr>
+          <tr><td>Estilo / Mentalidade</td><td>${t.mentality}</td></tr>
+          <tr><td>Temporização / Ritmo</td><td>${t.tempo}</td></tr>
+          <tr><td>Marcação</td><td>${e(t.marking)}</td></tr>
+          <tr><td>Impedimento</td><td>${e(t.offside)}</td></tr>
+          <tr><td>Desarme</td><td>${e(t.tackling)}</td></tr>
+          <tr><td>Ataque</td><td>${e(t.attackInstruction)}</td></tr>
+          <tr><td>Meio</td><td>${e(t.midfieldInstruction)}</td></tr>
+          <tr><td>Defesa</td><td>${e(t.defenceInstruction)}</td></tr>
+        </table>
+        <p class="small muted">Use somente como atalho quando a vantagem de força for ≥ 13. A tática gerada pela análise continua sendo a principal recomendação.</p>
+        <button class="btn" onclick="applyOffensiveDefault(${s.slotNumber})">Aplicar esta tática</button>
+      </div>
+    </div>`;
+  }
+
+  // Injeta o botão no Pré-jogo, imediatamente após a renderização normal.
+  const _renderPregame252=renderPregame;
+  renderPregame=function(){
+    _renderPregame252();
+    const s=selectedSlot();
+    const target=document.getElementById('pregameContent');
+    if(!target || !s || s.status!=='active')return;
+    const html=offensiveDefaultHtml(s);
+    if(html)target.insertAdjacentHTML('beforeend',html);
+  };
+
+  // Injeta também na tela Analisar depois de concluir a leitura da partida.
+  const _runPending252=runPendingAnalysis;
+  runPendingAnalysis=async function(){
+    await _runPending252();
+    if(analysisMode!=='tactic')return;
+    const s=selectedSlot();
+    const target=document.getElementById('analysisContent');
+    if(!target || !s)return;
+    const html=offensiveDefaultHtml(s);
+    if(html && !document.getElementById(`offensiveDefaultBox-${s.slotNumber}`)){
+      target.insertAdjacentHTML('beforeend',html);
+    }
+  };
+  window.runPendingAnalysis=runPendingAnalysis;
 
   // ------------------------------------------------------------
   // INICIALIZAÇÃO — NÃO altera adversário/rodada/calendário

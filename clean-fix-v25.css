@@ -94,3 +94,25 @@
 .clean-calendar .result-badge.win{color:#68e7b7!important;background:#12382e!important}
 .clean-calendar .result-badge.draw{color:#ffd46c!important;background:#403517!important}
 .clean-calendar .result-badge.loss{color:#ff95a2!important;background:#411e27!important}
+
+
+/* 2.5.2 — resultado em Hoje + tática ofensiva */
+.result-register-tabs{display:grid;gap:14px}
+.result-register-block{
+  padding:12px;border-radius:12px;border:1px solid #24445f;background:#091827
+}
+.result-register-block h3{margin:5px 0 8px}
+.result-register-divider{
+  display:flex;align-items:center;gap:10px;color:var(--muted);font-size:10px;text-transform:uppercase
+}
+.result-register-divider:before,.result-register-divider:after{
+  content:"";height:1px;background:#24445f;flex:1
+}
+.offensive-default-wrap{margin-top:12px}
+.offensive-default-toggle{
+  background:linear-gradient(180deg,#ffd36b,#e4a92f)!important;
+  color:#2b1d00!important;
+}
+.offensive-default-box{
+  margin-top:10px;border-color:#8a6a22;background:linear-gradient(180deg,#2b2410,#151a20)
+}
