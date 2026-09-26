@@ -12,7 +12,7 @@
   Não carrega os hotfixes 2.4.x anteriores.
 */
 (function(){
-  const CLEAN_VERSION='2.5.3';
+  const CLEAN_VERSION='2.5.4';
 
   function e(v){
     return String(v ?? 'NI').replace(/[&<>"']/g,m=>({
@@ -1057,15 +1057,35 @@ VALIDAÇÃO FORTE DE DATAS:
 
         <div class="result-register-divider"><span>ou</span></div>
 
-        <div class="result-register-block">
-          <span class="eyebrow">OPÇÃO 2 · MANUAL</span>
-          <h3>Informar placar</h3>
-          <div class="kpis">
-            <label>Meus gols<input id="rGF" type="number" min="0"></label>
-            <label>Gols rival<input id="rGA" type="number" min="0"></label>
+        <div class="result-register-block manual-result-block">
+          <div class="manual-result-head">
+            <div>
+              <span class="eyebrow">OPÇÃO 2 · MANUAL</span>
+              <h3>Informar placar</h3>
+            </div>
+            <span class="manual-result-team">${e(s.teamName||'Meu time')} × ${e(s.opponent?.teamName||'Adversário')}</span>
           </div>
-          <label>Observação<textarea id="rNote"></textarea></label>
-          <button class="btn ghost" onclick="saveResult(${slotNo})">Salvar resultado manualmente</button>
+
+          <div class="score-input-grid">
+            <label class="score-input-card">
+              <span>Meus gols</span>
+              <input id="rGF" type="number" min="0" inputmode="numeric" placeholder="0">
+            </label>
+            <div class="score-x">×</div>
+            <label class="score-input-card">
+              <span>Gols rival</span>
+              <input id="rGA" type="number" min="0" inputmode="numeric" placeholder="0">
+            </label>
+          </div>
+
+          <label class="manual-note-field">
+            <span>Observação <small>(opcional)</small></span>
+            <textarea id="rNote" rows="3" placeholder="Ex.: bom desempenho, rival mudou formação..."></textarea>
+          </label>
+
+          <button class="btn manual-save-result" onclick="saveResult(${slotNo})">
+            Salvar resultado manualmente
+          </button>
         </div>
       </div>`);
   };
