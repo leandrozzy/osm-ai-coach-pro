@@ -12,7 +12,7 @@
   Não carrega os hotfixes 2.4.x anteriores.
 */
 (function(){
-  const CLEAN_VERSION='2.5.7';
+  const CLEAN_VERSION='2.5.8';
 
   function e(v){
     return String(v ?? 'NI').replace(/[&<>"']/g,m=>({
@@ -1339,13 +1339,13 @@ VALIDAÇÃO FORTE DE DATAS:
     const t=offensiveDefaultTactic();
     return `<div class="offensive-default-wrap">
       <button class="btn offensive-default-toggle" onclick="toggleOffensiveDefault(${s.slotNumber})">
-        ⚡ Tática ofensiva padrão
+        ⚡ Gerar tática forte 4-3-3
       </button>
       <div id="offensiveDefaultBox-${s.slotNumber}" class="card offensive-default-box hidden">
         <div class="section-head compact-head">
           <div>
             <span class="eyebrow">VANTAGEM DE FORÇA ${e('+'+strengthDiff(s))}</span>
-            <h3>Opção ofensiva padrão</h3>
+            <h3>Tática forte 4-3-3</h3>
           </div>
         </div>
         <table class="tactic-table">
@@ -1361,7 +1361,7 @@ VALIDAÇÃO FORTE DE DATAS:
           <tr><td>Meio</td><td>${e(t.midfieldInstruction)}</td></tr>
           <tr><td>Defesa</td><td>${e(t.defenceInstruction)}</td></tr>
         </table>
-        <p class="small muted">Use somente como atalho quando a vantagem de força for ≥ 13. A tática gerada pela análise continua sendo a principal recomendação.</p>
+        <p class="small muted">Disponível porque sua vantagem de força é de pelo menos 13 pontos. Você pode aplicar esta 4-3-3 ofensiva diretamente.</p>
         <button class="btn" onclick="applyOffensiveDefault(${s.slotNumber})">Aplicar esta tática</button>
       </div>
     </div>`;
@@ -1684,6 +1684,58 @@ Não use null só porque uma tela não foi classificada pelo OCR. Confira visual
 Porém, se realmente não estiver visível, mantenha null — nunca invente.`;
     }
     return p;
+  };
+
+
+  // ------------------------------------------------------------
+  // 2.5.8 — BOTÃO FORTE 4-3-3 VISÍVEL NO PREPARAR
+  // ------------------------------------------------------------
+  function strong433ButtonHtml(s){
+    if(!s || s.status!=='active')return '';
+    const d=strengthDiff(s);
+    if(d===null || d<13)return '';
+    return `<div class="card strong433-action-card">
+      <div>
+        <span class="eyebrow">VANTAGEM DE FORÇA +${e(d)}</span>
+        <h3>Tática forte 4-3-3 disponível</h3>
+        <p class="small muted">Seu time está pelo menos 13 pontos acima do rival.</p>
+      </div>
+      <div class="actions">
+        <button class="btn strong433-main-btn" onclick="applyOffensiveDefault(${s.slotNumber})">⚡ Gerar tática forte 4-3-3</button>
+        <button class="btn ghost" onclick="toggleOffensiveDefault(${s.slotNumber})">Ver configuração</button>
+      </div>
+      <div id="offensiveDefaultBox-${s.slotNumber}" class="strong433-inline-details hidden">
+        <table class="tactic-table">
+          <tr><td>Formação</td><td>4-3-3 A</td></tr>
+          <tr><td>Estilo de jogo</td><td>Jogar pelas alas</td></tr>
+          <tr><td>Pressão</td><td>78</td></tr>
+          <tr><td>Estilo / Mentalidade</td><td>82</td></tr>
+          <tr><td>Temporização / Ritmo</td><td>84</td></tr>
+          <tr><td>Marcação</td><td>À zona</td></tr>
+          <tr><td>Impedimento</td><td>Sim</td></tr>
+          <tr><td>Desarme</td><td>Normal</td></tr>
+          <tr><td>Ataque</td><td>Atacar apenas</td></tr>
+          <tr><td>Meio</td><td>Pressionar na frente</td></tr>
+          <tr><td>Defesa</td><td>Apoiar o meio-campo</td></tr>
+        </table>
+      </div>
+    </div>`;
+  }
+
+  const _renderPregame258=renderPregame;
+  renderPregame=function(){
+    _renderPregame258();
+    const s=selectedSlot();
+    const target=document.getElementById('pregameContent');
+    if(!target || !s || s.status!=='active')return;
+
+    // Remove qualquer versão antiga duplicada do botão/box.
+    target.querySelectorAll('.offensive-default-wrap').forEach(x=>x.remove());
+
+    const html=strong433ButtonHtml(s);
+    if(html){
+      target.insertAdjacentHTML('afterbegin',html);
+    }
   };
 
   // ------------------------------------------------------------

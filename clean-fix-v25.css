@@ -272,3 +272,23 @@
 .bulk-smart-fields label:last-of-type{
   border-bottom:0;
 }
+
+
+/* 2.5.8 — botão forte 4-3-3 no Preparar */
+.strong433-action-card{
+  margin-bottom:12px;
+  border-color:#9a7424!important;
+  background:linear-gradient(180deg,#2b2410,#121c25)!important;
+}
+.strong433-action-card h3{
+  margin:5px 0 4px;
+}
+.strong433-main-btn{
+  background:linear-gradient(180deg,#ffd36b,#e4aa31)!important;
+  color:#2a1c00!important;
+}
+.strong433-inline-details{
+  margin-top:12px;
+  padding-top:10px;
+  border-top:1px solid #6d5727;
+}
