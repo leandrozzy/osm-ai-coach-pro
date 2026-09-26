@@ -79,3 +79,18 @@
     min-width:720px;
   }
 }
+
+
+/* 2.5.1 */
+.result-now-btn{border-color:#35607f!important}
+.market-moves-card{margin-bottom:12px;border-color:#2b5a70}
+.market-transactions{display:grid;gap:6px;margin-top:10px}
+.market-transactions>div{
+  display:flex;justify-content:space-between;gap:10px;
+  padding:8px 10px;border-radius:9px;background:#091827;border:1px solid #18354f
+}
+.market-transactions b{font-size:11px}
+.market-transactions span{font-size:10px;color:var(--muted)}
+.clean-calendar .result-badge.win{color:#68e7b7!important;background:#12382e!important}
+.clean-calendar .result-badge.draw{color:#ffd46c!important;background:#403517!important}
+.clean-calendar .result-badge.loss{color:#ff95a2!important;background:#411e27!important}

@@ -12,7 +12,7 @@
   Não carrega os hotfixes 2.4.x anteriores.
 */
 (function(){
-  const CLEAN_VERSION='2.5.0';
+  const CLEAN_VERSION='2.5.1';
 
   function e(v){
     return String(v ?? 'NI').replace(/[&<>"']/g,m=>({
@@ -702,6 +702,328 @@ REGRA CRÍTICA DE RESULTADO:
       try{localStorage.setItem(STATE_KEY,JSON.stringify(state))}catch{}
     },1800);
   });
+
+
+
+  // ------------------------------------------------------------
+  // 2.5.1 — RESULTADO MANUAL SEM DEPENDER DE TÁTICA ATIVA
+  // ------------------------------------------------------------
+  window.resultModal=function(slotNo){
+    const s=state.slots[slotNo-1];
+    if(!s || s.status!=='active'){toast('Configure o slot primeiro');return}
+    openModal(`<h2>Registrar resultado · Slot ${slotNo}</h2>
+      <div class="field-edit">
+        <label>Adversário
+          <input id="rOpp" value="${e(s.opponent?.teamName||'')}" readonly>
+        </label>
+        <div class="kpis">
+          <label>Meus gols<input id="rGF" type="number" min="0"></label>
+          <label>Gols rival<input id="rGA" type="number" min="0"></label>
+        </div>
+        <label>Observação<textarea id="rNote"></textarea></label>
+        <button class="btn" onclick="saveResult(${slotNo})">Salvar resultado</button>
+      </div>`);
+  };
+
+  window.saveResult=function(slotNo){
+    const s=state.slots[slotNo-1];
+    const gf=Number(document.getElementById('rGF')?.value);
+    const ga=Number(document.getElementById('rGA')?.value);
+    if(!Number.isFinite(gf)||!Number.isFinite(ga)){toast('Informe o placar');return}
+    const note=document.getElementById('rNote')?.value?.trim()||null;
+    const done=finishResult(s,{gf,ga,score:`${gf}-${ga}`});
+    if(done.entry)done.entry.note=note;
+    saveState();
+    closeModal();
+    renderLearning();
+    toast(`Resultado ${gf}-${ga} registrado no Slot ${slotNo}`);
+  };
+
+  // ------------------------------------------------------------
+  // 2.5.1 — CORES DO CALENDÁRIO ROBUSTAS
+  // ------------------------------------------------------------
+  function calendarOutcomeCode(x){
+    const raw=n(x?.outcome);
+    if(['v','vitoria','vitória','win','victory'].includes(raw))return 'V';
+    if(['e','empate','draw'].includes(raw))return 'E';
+    if(['d','derrota','loss','defeat'].includes(raw))return 'D';
+
+    const result=String(x?.result||'').trim();
+    const m=result.match(/(\d+)\s*[-x:]\s*(\d+)/i);
+    if(m){
+      const a=Number(m[1]),b=Number(m[2]);
+      if(a>b)return 'V';
+      if(a===b)return 'E';
+      return 'D';
+    }
+    return null;
+  }
+  function calendarOutcomeClass(x){
+    const c=calendarOutcomeCode(x);
+    return c==='V'?'win':c==='E'?'draw':c==='D'?'loss':'';
+  }
+  function calendarOutcomeTextSafe(x){
+    const c=calendarOutcomeCode(x);
+    return c==='V'?'Vitória':c==='E'?'Empate':c==='D'?'Derrota':(x?.played?'Jogado':'Futuro');
+  }
+
+  // Substitui a tabela novamente, desta vez normalizando outcome antes da cor.
+  calendarTableHtml=function(rows){
+    return `<div class="calendar-wrap">
+      <table class="simple-table calendar-table clean-calendar">
+        <thead>
+          <tr><th>Rod.</th><th>Local</th><th>Adversário</th><th>Data/hora</th><th>Status</th><th>Ação</th></tr>
+        </thead>
+        <tbody>${(rows||[]).map((x,i)=>`
+          <tr>
+            <td>${e(x.round)}</td>
+            <td>${e(x.venue)}</td>
+            <td>${e(realOpponent(x.opponent)?x.opponent:'A definir')}</td>
+            <td>${e(x.dateTime?fmtDate(x.dateTime):`${x.dateText||'NI'} ${x.timeText||''}`)}</td>
+            <td>${x.played
+              ? `<span class="result-badge ${calendarOutcomeClass(x)}">${e(calendarOutcomeTextSafe(x))}</span>${x.result?` · ${e(x.result)}`:''}`
+              : x.skipped?'Ignorado':x.conditional?'Condicional':'Futuro'
+            }</td>
+            <td><button class="btn ghost tiny calendar-edit-btn" onclick="editCalendarMatch(${i})">Editar</button></td>
+          </tr>`).join('')}</tbody>
+      </table>
+    </div>`;
+  };
+
+  // ------------------------------------------------------------
+  // 2.5.1 — HOJE: botão Registrar resultado sempre disponível
+  // ------------------------------------------------------------
+  const _cleanNextAction251=nextAction;
+  nextAction=function(){
+    const s=selectedSlot();
+    const a=_cleanNextAction251();
+    if(!s || s.status!=='active')return a;
+    a.buttons += `<button class="btn ghost result-now-btn" onclick="resultModal(${s.slotNumber})">Registrar resultado</button>`;
+    return a;
+  };
+
+  // ------------------------------------------------------------
+  // 2.5.1 — RADAR: urgência depende do tempo até o jogo
+  // ------------------------------------------------------------
+  function hoursUntilMatch(s){
+    const raw=s?.match?.nextMatchAt;
+    if(!raw)return null;
+    const t=new Date(raw).getTime()-Date.now();
+    return Number.isFinite(t)?t/3600000:null;
+  }
+
+  renderRadar=function(){
+    const s=selectedSlot();
+    const el=document.getElementById('radarPanel');
+    if(!el)return;
+    if(!s || s.status!=='active'){
+      el.innerHTML='';
+      return;
+    }
+
+    const rows=[];
+    const hrs=hoursUntilMatch(s);
+    const miss=missingRequired(s);
+
+    // Mais de 48h: não chama de urgente.
+    if(miss.length){
+      if(hrs!==null && hrs<=18){
+        rows.push([`Completar preparação do Slot ${s.slotNumber}`,`${miss.length} campo(s) essencial(is) · jogo em ${Math.max(0,Math.round(hrs))}h`,'danger','Urgente']);
+      }else if(hrs!==null && hrs<=48){
+        rows.push([`Preparar Slot ${s.slotNumber}`,`${miss.length} campo(s) pendente(s) · ainda há ${Math.max(1,Math.round(hrs))}h`,'warn','Atenção']);
+      }else{
+        rows.push([`Preparação futura do Slot ${s.slotNumber}`,`${miss.length} campo(s) ainda podem ser completados antes do jogo${hrs!==null?` · faltam cerca de ${Math.round(hrs/24)} dia(s)`:''}`,'','Planejar']);
+      }
+    }else if(!s.tactic && hrs!==null && hrs<=48){
+      rows.push([`Gerar tática do Slot ${s.slotNumber}`,'Dados essenciais disponíveis.','warn','Atenção']);
+    }
+
+    if(s.analysisRuns?.market?.status==='warning'){
+      rows.push(['Revisar elenco',s.analysisRuns.market.message,'warn','Atenção']);
+    }
+
+    el.innerHTML=`<div class="section-head"><div><span class="eyebrow">RADAR DO SLOT ${s.slotNumber}</span><h2>Próximas ações</h2></div></div>
+      <div class="card radar-list">${rows.length
+        ? rows.map(r=>`<div class="radar-item"><div><b>${e(r[0])}</b><span>${e(r[1])}</span></div><span class="status ${r[2]}">${e(r[3])}</span></div>`).join('')
+        : '<p class="muted">Nada urgente neste slot agora.</p>'
+      }</div>`;
+  };
+
+  // ------------------------------------------------------------
+  // 2.5.1 — DIRETOR: registrar compra e venda
+  // ------------------------------------------------------------
+  const _cleanRenderMarket251=renderMarket;
+  renderMarket=function(){
+    _cleanRenderMarket251();
+    const s=selectedSlot();
+    if(!s || s.status!=='active')return;
+    const target=document.getElementById('marketContent');
+    if(!target)return;
+
+    const tx=Array.isArray(s.marketTransactions)?s.marketTransactions:[];
+    target.insertAdjacentHTML('afterbegin',`
+      <div class="card market-moves-card">
+        <div class="section-head compact-head">
+          <div><span class="eyebrow">MOVIMENTAÇÕES · SLOT ${e(s.slotNumber)}</span><h3>Atualizar elenco manualmente</h3></div>
+        </div>
+        <p class="small muted">Registre uma compra ou venda assim que acontecer. O Diretor recalcula o plano usando o elenco atualizado.</p>
+        <div class="actions">
+          <button class="btn" onclick="addBoughtPlayerModal()">+ Jogador comprado</button>
+          <button class="btn ghost" onclick="sellPlayerModal()">− Jogador vendido</button>
+        </div>
+        ${tx.length?`<div class="market-transactions">${tx.slice(0,6).map(t=>`
+          <div><b>${t.type==='buy'?'Compra':'Venda'} · ${e(t.name)}</b><span>${e(t.position||'')} ${filled(t.rating)?`· força ${e(t.rating)}`:''}</span></div>`).join('')}</div>`:''}
+      </div>`);
+  };
+
+  window.addBoughtPlayerModal=function(){
+    const s=selectedSlot();
+    openModal(`<h2>Jogador comprado · Slot ${s.slotNumber}</h2>
+      <div class="field-edit">
+        <label>Nome<input id="buyName" placeholder="Nome do jogador"></label>
+        <label>Posição
+          <select id="buyPos">
+            <option value="ATA">ATA</option>
+            <option value="MEI">MEI</option>
+            <option value="DEF">DEF</option>
+            <option value="GOL">GOL</option>
+          </select>
+        </label>
+        <div class="kpis">
+          <label>Força<input id="buyRating" type="number" min="1" max="200"></label>
+          <label>Idade<input id="buyAge" type="number" min="15" max="50"></label>
+        </div>
+        <label>Valor/preço (opcional)<input id="buyValue" placeholder="Ex.: 12.5M"></label>
+        <button class="btn" onclick="saveBoughtPlayer()">Adicionar ao elenco e recalcular</button>
+      </div>`);
+  };
+
+  window.saveBoughtPlayer=function(){
+    const s=selectedSlot();
+    const name=document.getElementById('buyName')?.value?.trim();
+    const position=document.getElementById('buyPos')?.value;
+    const rating=Number(document.getElementById('buyRating')?.value);
+    const age=Number(document.getElementById('buyAge')?.value);
+    const value=document.getElementById('buyValue')?.value?.trim()||null;
+    if(!name){toast('Informe o nome do jogador');return}
+    if(!Number.isFinite(rating)){toast('Informe a força do jogador');return}
+
+    s.roster=Array.isArray(s.roster)?s.roster:[];
+    s.roster.push({
+      name,position,rating,
+      age:Number.isFinite(age)?age:null,
+      value,
+      training:false,forSale:false,
+      manualTransaction:true
+    });
+    s.myTeam=s.myTeam||{};
+    s.myTeam.playerCount=s.roster.length;
+    s.marketTransactions=Array.isArray(s.marketTransactions)?s.marketTransactions:[];
+    s.marketTransactions.unshift({type:'buy',name,position,rating,at:new Date().toISOString()});
+    buildMarketPlan(s);
+    localStorage.setItem(STATE_KEY,JSON.stringify(state));
+    closeModal();renderMarket();renderDashboard();
+    toast(`${name} adicionado ao elenco`);
+  };
+
+  window.sellPlayerModal=function(){
+    const s=selectedSlot();
+    const roster=Array.isArray(s.roster)?s.roster:[];
+    if(!roster.length){toast('Nenhum jogador no elenco');return}
+    openModal(`<h2>Jogador vendido · Slot ${s.slotNumber}</h2>
+      <div class="field-edit">
+        <label>Jogador
+          <select id="sellPlayerIndex">
+            ${roster.map((p,i)=>`<option value="${i}">${e(playerNameValue(p)||'Sem nome')} · ${e(normalizePos(playerPosValue(p))||playerPosValue(p)||'NI')} · ${e(playerRatingValue(p))}</option>`).join('')}
+          </select>
+        </label>
+        <button class="btn danger" onclick="saveSoldPlayer()">Remover do elenco e recalcular</button>
+      </div>`);
+  };
+
+  window.saveSoldPlayer=function(){
+    const s=selectedSlot();
+    const idx=Number(document.getElementById('sellPlayerIndex')?.value);
+    if(!Number.isInteger(idx)||idx<0||idx>=s.roster.length){toast('Selecione um jogador');return}
+    const [p]=s.roster.splice(idx,1);
+    const name=playerNameValue(p)||'Jogador';
+    const position=normalizePos(playerPosValue(p))||playerPosValue(p)||null;
+    const rating=playerRatingValue(p);
+    s.myTeam=s.myTeam||{};
+    s.myTeam.playerCount=s.roster.length;
+    s.marketTransactions=Array.isArray(s.marketTransactions)?s.marketTransactions:[];
+    s.marketTransactions.unshift({type:'sell',name,position,rating,at:new Date().toISOString()});
+    buildMarketPlan(s);
+    localStorage.setItem(STATE_KEY,JSON.stringify(state));
+    closeModal();renderMarket();renderDashboard();
+    toast(`${name} removido do elenco`);
+  };
+
+  // ------------------------------------------------------------
+  // 2.5.1 — CALENDÁRIO: mais imagens e datas somente quando legíveis
+  // ------------------------------------------------------------
+  const _cleanPrompt251=v21Prompt;
+  v21Prompt=function(ocr,mode){
+    let p=_cleanPrompt251(ocr,mode);
+    if(mode==='calendar'){
+      p+=`
+VALIDAÇÃO FORTE DE DATAS:
+- A imagem é a fonte principal para DIA/MÊS; OCR é somente apoio.
+- Leia cada data visualmente, dígito por dígito.
+- Não suponha sequência de dias.
+- Não transforme 28 em 27, 26 em 25 etc. por padrão de sequência.
+- Se o primeiro dígito da data estiver ambíguo, use dateText=null/dateTime=null em vez de adivinhar.
+- Preserve exatamente a primeira data real visível no vídeo.
+- Revise especialmente a PRIMEIRA partida futura antes de responder.`;
+    }
+    return p;
+  };
+
+  const _cleanAnalyze251=v21Analyze;
+  v21Analyze=async function(files){
+    if(analysisMode!=='calendar')return _cleanAnalyze251(files);
+
+    const slotNo=Number(document.getElementById('analysisSlot')?.value)||state.selectedSlot;
+    state.selectedSlot=slotNo;
+    const video=files.find(f=>String(f.type||'').startsWith('video/'));
+    const images=files.filter(f=>String(f.type||'').startsWith('image/'));
+    let frames=[];
+
+    setProgress(5,'Capturando calendário com mais quadros…');
+    if(video){
+      // Mais cobertura para datas pequenas no calendário.
+      frames=await v21ExtractVideoFrames(video,28);
+    }else if(images.length){
+      for(const f of images)frames.push(await v21ImageToFrame(f));
+    }else throw new Error('Selecione um vídeo ou imagens do calendário.');
+
+    v21RenderEvidence(frames);
+    setProgress(18,'Lendo datas e adversários…');
+    const ocr=await v21RunLocalOcr(frames);
+
+    // 10 evidências distribuídas cronologicamente, não só as mais diferentes.
+    const sorted=[...frames].sort((a,b)=>(a.time||0)-(b.time||0));
+    const evidence=[];
+    const wanted=Math.min(10,sorted.length);
+    for(let i=0;i<wanted;i++){
+      const idx=Math.round(i*(sorted.length-1)/Math.max(1,wanted-1));
+      if(sorted[idx]&&!evidence.includes(sorted[idx]))evidence.push(sorted[idx]);
+    }
+
+    setProgress(58,'Validando calendário…');
+    const result=await v21AnalyzePackage(ocr,evidence,'calendar');
+    v21ApplyCalendar(result);
+    saveState();
+    renderInfo();
+
+    const cr=(selectedSlot().schedule||[]).length;
+    document.getElementById('analysisContent').innerHTML=
+      `<div class="card" style="margin-top:12px"><h3>Calendário atualizado</h3><p class="small muted">${cr} partida(s) reconhecida(s). Confira a primeira data futura; se alguma data ficar NI, use Editar em vez de aceitar uma data inventada.</p></div>`;
+    setAnalysisRun(selectedSlot(),'calendar',cr?'success':'warning',`${cr} partida(s) reconhecida(s).`,{count:cr});
+    setProgress(100,'Calendário atualizado');
+    job('Calendário atualizado.','done');
+  };
+  window.v21Analyze=v21Analyze;
 
   // ------------------------------------------------------------
   // INICIALIZAÇÃO — NÃO altera adversário/rodada/calendário
